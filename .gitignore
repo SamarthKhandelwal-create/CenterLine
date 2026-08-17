@@ -1,0 +1,10 @@
+node_modules
+.next
+.env
+.env.local
+.pgdata
+*.tsbuildinfo
+next-env.d.ts
+.demo-credentials.json
+.pgdata.lock
+.next-dev

@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1786552931641,
+      "tag": "0000_ambitious_blockbuster",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786721809664,
+      "tag": "0001_steep_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786721810664,
+      "tag": "0002_retire_pin_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786926853932,
+      "tag": "0003_awesome_wildside",
+      "breakpoints": true
+    }
+  ]
+}
