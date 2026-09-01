@@ -50,12 +50,14 @@ export const SHARED_STAFF = [
   },
   {
     /**
-     * The same person as the instructor at Liberty Township North, under the same
-     * address and a different password. Sign-in tells the two apart by which password
-     * verifies, so this must not be set to the one used there.
+     * The same person as the instructor at Liberty Township North, under an address of
+     * its own. Sign-in *can* tell two accounts on one address apart by which password
+     * verifies, but nothing on the form says which centre you are about to land in —
+     * so the person types the wrong password and is quietly signed in to the other
+     * centre. A distinct address per centre removes the guesswork.
      */
     centreName: 'Kumon of Mason West',
-    email: 'sonamkhandelwal@ikumon.com',
+    email: 'sonam.mason@ikumon.com',
     name: 'Sonam Khandelwal',
     passwordEnvVar: 'MASON_INSTRUCTOR_PASSWORD',
     role: 'instructor' as const,
