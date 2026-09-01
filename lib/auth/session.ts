@@ -15,6 +15,12 @@ export type SessionClaims = z.infer<typeof sessionClaims>;
 export const kioskClaims = z.object({
   cid: z.string().uuid(),
   label: z.string(),
+  /**
+   * The role of whoever put this tablet into kiosk mode. Optional because tokens minted
+   * before staff clocking moved onto the kiosk do not carry it; those read as "not an
+   * instructor", so the staff panel stays hidden until the device is enrolled again.
+   */
+  role: z.enum(['instructor', 'assistant']).optional(),
   exp: z.number().int(),
 });
 export type KioskClaims = z.infer<typeof kioskClaims>;
@@ -91,9 +97,10 @@ export async function createKioskToken(
   centreId: string,
   label: string,
   secret: string,
+  role?: SessionClaims['role'],
 ): Promise<string> {
   const exp = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 400;
-  return signToken({ cid: centreId, label, exp }, secret);
+  return signToken({ cid: centreId, label, role, exp }, secret);
 }
 
 export async function readKioskToken(

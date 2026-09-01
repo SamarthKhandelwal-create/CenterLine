@@ -13,6 +13,20 @@ const schema = z.object({
   TWILIO_FROM_NUMBER: z.string().optional(),
   TWILIO_WEBHOOK_URL: z.string().optional(),
   NOT_ARRIVED_HOUR: z.coerce.number().int().min(0).max(23).default(17),
+  EMAIL_PROVIDER: z.enum(['console', 'resend', 'smtp']).default('console'),
+  RESEND_API_KEY: z.string().optional(),
+  SMTP_URL: z.string().optional(),
+  /**
+   * The From address. Resend accepts `onboarding@resend.dev` with no domain set up
+   * at all, which is what makes the free tier usable on day one.
+   */
+  EMAIL_FROM: z.string().default('Centerline <onboarding@resend.dev>'),
+  /**
+   * Absolute origin used to build reset links. Optional: the request's own origin is
+   * used when it is unset, which is right everywhere except behind a proxy that
+   * rewrites the host.
+   */
+  APP_URL: z.string().optional(),
 });
 
 const DEV_FALLBACK = 'centerline-development-only-secret-do-not-use-in-prod';

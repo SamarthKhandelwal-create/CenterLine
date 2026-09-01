@@ -8,3 +8,14 @@ next-env.d.ts
 .demo-credentials.json
 .pgdata.lock
 .next-dev
+.vercel
+.env*
+
+# rendered kiosk poster
+/out
+
+# Roster exports: real student names, guardian phone numbers and email addresses.
+# Never commit these.
+*.xlsx
+*.xls
+!tests/fixtures/*

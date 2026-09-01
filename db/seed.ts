@@ -19,6 +19,7 @@ import { generateToken, hashToken } from '../lib/credentials/token';
 import { instantFromLocal, localDateString, addDays } from '../lib/time/centre-time';
 import { expectedMinutesFor } from '../lib/students/expected-minutes';
 import { DEMO_CREDENTIALS_PATH } from './demo-credentials';
+import { SHARED_STAFF, createSharedStaff } from './shared-staff';
 import { assertExclusive } from './pglite-lock';
 
 const TIMEZONE = 'America/New_York';
@@ -33,6 +34,11 @@ const CENTRES = [
     closeTime: '19:00:00',
     instructor: { email: 'masonwest@centerline.test', name: 'Sandra Whitfield' },
     assistant: { email: 'masonwest.assistant@centerline.test', name: 'Devon Ruiz' },
+    extraAssistants: [
+      { email: 'masonwest.assistant2@centerline.test', name: 'Priya Nair' },
+      { email: 'masonwest.assistant3@centerline.test', name: 'Tomas Alvarez' },
+      { email: 'masonwest.assistant4@centerline.test', name: 'Grace Okonkwo' },
+    ],
     students: 42,
     /** Left with open estimates and unconfirmed certifications, so the work shows. */
     tidy: false,
@@ -44,6 +50,11 @@ const CENTRES = [
     closeTime: '18:30:00',
     instructor: { email: 'liberty@centerline.test', name: 'Anita Raghavan' },
     assistant: { email: 'liberty.assistant@centerline.test', name: 'Marcus Bell' },
+    extraAssistants: [
+      { email: 'liberty.assistant2@centerline.test', name: 'Hana Sato' },
+      { email: 'liberty.assistant3@centerline.test', name: 'Elias Berg' },
+      { email: 'liberty.assistant4@centerline.test', name: 'Nadia Haddad' },
+    ],
     students: 36,
     /** Fully reconciled and certified, so /compliance reads all eight met. */
     tidy: true,
@@ -107,7 +118,7 @@ async function seedCentre(
   const centreId = centre!.id;
 
   const passwordHash = await hashPassword(SEED_PASSWORD);
-  const [instructor, assistant] = await db
+  const insertedStaff = await db
     .insert(userT)
     .values([
       {
@@ -124,8 +135,24 @@ async function seedCentre(
         role: 'assistant' as const,
         name: def.assistant.name,
       },
+      // Three more assistants per centre, so the floor has a staff of five and there
+      // is somebody other than yourself to clock in, clock out and read on /staff.
+      // Same password as everyone else — these are demo accounts, not stubs.
+      ...def.extraAssistants.map((a) => ({
+        centreId,
+        email: a.email,
+        passwordHash,
+        role: 'assistant' as const,
+        name: a.name,
+      })),
     ])
     .returning();
+
+  // Keyed by email rather than trusting RETURNING to come back in insertion order.
+  const staffByEmail = new Map(insertedStaff.map((u) => [u.email, u]));
+  const instructor = staffByEmail.get(def.instructor.email);
+  const assistant = staffByEmail.get(def.assistant.email);
+  const extraAssistants = def.extraAssistants.map((a) => staffByEmail.get(a.email)!);
 
   // ---- Students, guardians, credentials -----------------------------------
   const printable: DemoCredential[] = [];
@@ -333,10 +360,19 @@ async function seedCentre(
     const weekday = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
     if (weekday === 0) continue; // closed Sundays
 
-    for (const person of [instructor!, assistant!]) {
-      const startHour = person.role === 'instructor' ? 13 : 14;
+    for (const person of [instructor!, assistant!, ...extraAssistants]) {
+      // The two core staff are in every afternoon; the three extra assistants work a
+      // rota, roughly one day in three. Four identical rows a day is not what a floor
+      // looks like, and a log with gaps in it is the one worth reading.
+      const rotaIndex = extraAssistants.indexOf(person);
+      if (rotaIndex >= 0 && back % 3 !== rotaIndex) continue;
+
+      const startHour = person.role === 'instructor' ? 13 : rotaIndex >= 0 ? 15 : 14;
       const started = instantFromLocal(dateStr, { hour: startHour, minute: 30 }, def.timezone);
-      const leftOpen = !def.tidy && back === 1 && person.role === 'assistant';
+      // Scoped to the named assistant, not to the role: with four assistants in the
+      // centre, "any assistant, yesterday" would leave four forgotten shifts open
+      // instead of the single one that screen is meant to demonstrate.
+      const leftOpen = !def.tidy && back === 1 && person.id === assistant!.id;
       shifts.push({
         centreId,
         userId: person.id,
@@ -398,6 +434,7 @@ async function seedCentre(
 
   const summary = [
     `${def.name}`,
+    `  ${insertedStaff.length} staff (1 instructor, ${insertedStaff.length - 1} assistants) · ${shifts.length} shifts over 14 days`,
     `  ${studentIds.length} students · ${events.length} attendance events over ${DAYS} days`,
     `  ${missingCheckouts} forgotten check-outs, ${inferredCount} closed by the hourly job`,
     def.tidy
@@ -436,6 +473,8 @@ async function main() {
     summaries.push(summary);
   }
 
+  await createSharedStaff(db);
+
   await writeFile(DEMO_CREDENTIALS_PATH, JSON.stringify(allPrintable, null, 2));
 
   console.log('');
@@ -449,6 +488,12 @@ async function main() {
     console.log(`  ${def.name}`);
     console.log(`    ${def.instructor.email.padEnd(38)} ${SEED_PASSWORD}   instructor — sees everything`);
     console.log(`    ${def.assistant.email.padEnd(38)} ${SEED_PASSWORD}   assistant — kiosk, floor, emergency`);
+    for (const extra of def.extraAssistants) {
+      console.log(`    ${extra.email.padEnd(38)} ${SEED_PASSWORD}   assistant — ${extra.name}, on a rota`);
+    }
+    for (const shared of SHARED_STAFF.filter((s) => s.centreName === def.name)) {
+      console.log(`    ${shared.email.padEnd(38)} $${shared.passwordEnvVar}   ${shared.role} — shared front-desk account`);
+    }
   }
   console.log('');
   console.log('Kiosk test credentials (normally only on printed cards):');

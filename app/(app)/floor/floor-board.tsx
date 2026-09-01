@@ -13,7 +13,6 @@ import { cn } from '@/lib/utils';
 import { staffCheckOutAction, sweepOverdueAction } from './actions';
 import { MessageDialog } from './message-dialog';
 import { CheckInDialog, type NotPresentStudent } from './check-in-dialog';
-import { ShiftBar, type ShiftBarProps } from './shift-bar';
 
 export type FloorCard = {
   studentId: string;
@@ -31,13 +30,11 @@ export function FloorBoard({
   centreName,
   notPresent,
   pastCloseGrace,
-  shift,
 }: {
   present: FloorCard[];
   centreName: string;
   notPresent: NotPresentStudent[];
   pastCloseGrace: boolean;
-  shift: ShiftBarProps;
 }) {
   return (
     <TickProvider intervalMs={10_000}>
@@ -46,7 +43,6 @@ export function FloorBoard({
         centreName={centreName}
         notPresent={notPresent}
         pastCloseGrace={pastCloseGrace}
-        shift={shift}
       />
     </TickProvider>
   );
@@ -57,13 +53,11 @@ function FloorInner({
   centreName,
   notPresent,
   pastCloseGrace,
-  shift,
 }: {
   present: FloorCard[];
   centreName: string;
   notPresent: NotPresentStudent[];
   pastCloseGrace: boolean;
-  shift: ShiftBarProps;
 }) {
   const router = useRouter();
   const [query, setQuery] = useState('');
@@ -157,8 +151,6 @@ function FloorInner({
 
   return (
     <div className="space-y-4">
-      <ShiftBar {...shift} />
-
       {/* Renders nothing at all when nobody is over time: no header, no empty state,
           zero height. When it does render it is meant to be readable across the room. */}
       {overTime.length > 0 ? (

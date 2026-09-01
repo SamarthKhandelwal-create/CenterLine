@@ -6,7 +6,13 @@ const nextConfig: NextConfig = {
   // chunk files which no longer exist. Giving dev its own directory makes the two
   // safe to run side by side.
   distDir: process.env.NEXT_DIST_DIR ?? '.next',
-  serverExternalPackages: ['@react-pdf/renderer', '@electric-sql/pglite', 'xlsx', 'postgres'],
+  serverExternalPackages: [
+    '@react-pdf/renderer',
+    '@electric-sql/pglite',
+    'xlsx',
+    'postgres',
+    'nodemailer',
+  ],
   typedRoutes: false,
 };
 

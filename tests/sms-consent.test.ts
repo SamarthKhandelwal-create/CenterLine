@@ -12,6 +12,7 @@ import { guardian as guardianT, messageLog, studentGuardian } from '@/db/schema'
 import { RecordingProvider, setSmsProvider } from '@/lib/sms/provider';
 import {
   isQuietHours,
+  notArrivedRanToday,
   revokeConsentByPhone,
   sendManualMessage,
   sendNotArrived,
@@ -256,5 +257,46 @@ describe('SMS consent gate', () => {
     expect(pickupReadyBody(['Aiden', 'Maya'], 'Kumon')).toBe(
       'Aiden and Maya are finished at Kumon and ready for pickup.',
     );
+  });
+
+  describe('the not-arrived once-a-day guard', () => {
+    it('is false before the sweep has run and true afterwards', async () => {
+      useRecorder();
+      const centre = await makeCentre(db, { timezone: TZ });
+      const student = await makeStudent(db, centre.id);
+      await makeGuardian(db, centre.id, student.id, { smsConsent: true });
+
+      expect(await notArrivedRanToday(centre, afternoon, asDb(db))).toBe(false);
+      await sendNotArrived({ studentId: student.id, centre, at: afternoon }, asDb(db));
+      expect(await notArrivedRanToday(centre, afternoon, asDb(db))).toBe(true);
+    });
+
+    it('counts a skipped send — the sweep still ran', async () => {
+      useRecorder();
+      const centre = await makeCentre(db, { timezone: TZ });
+      const student = await makeStudent(db, centre.id);
+      await makeGuardian(db, centre.id, student.id, { smsConsent: false });
+
+      const outcome = await sendNotArrived({ studentId: student.id, centre, at: afternoon }, asDb(db));
+      expect(outcome.status).toBe('skipped_no_consent');
+      expect(await notArrivedRanToday(centre, afternoon, asDb(db))).toBe(true);
+    });
+
+    it('is scoped to the centre-local day, and to the centre', async () => {
+      useRecorder();
+      const centre = await makeCentre(db, { timezone: TZ });
+      const other = await makeCentre(db, { timezone: TZ });
+      const student = await makeStudent(db, centre.id);
+      await makeGuardian(db, centre.id, student.id, { smsConsent: true });
+      await sendNotArrived({ studentId: student.id, centre, at: afternoon }, asDb(db));
+
+      const nextDay = instantFromLocal('2026-05-13', { hour: 16, minute: 0 }, TZ);
+      expect(await notArrivedRanToday(centre, nextDay, asDb(db))).toBe(false);
+      expect(await notArrivedRanToday(other, afternoon, asDb(db))).toBe(false);
+
+      // Late evening is still the same local day: the sweep must not repeat.
+      const sameDayLater = instantFromLocal(DAY, { hour: 20, minute: 30 }, TZ);
+      expect(await notArrivedRanToday(centre, sameDayLater, asDb(db))).toBe(true);
+    });
   });
 });

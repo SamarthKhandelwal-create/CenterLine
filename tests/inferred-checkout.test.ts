@@ -9,7 +9,11 @@ import {
   makeUser,
   type TestDb,
 } from './helpers/db';
-import { resolveOpenSessions, INFERENCE_BASIS } from '@/lib/attendance/resolve';
+import {
+  resolveOpenSessions,
+  resolveRecentOpenSessions,
+  INFERENCE_BASIS,
+} from '@/lib/attendance/resolve';
 import { confirmInferredCheckOut } from '@/lib/attendance/commands';
 import { sessionsInRange, unconfirmedInferredSessions } from '@/lib/attendance/queries';
 import { instantFromLocal } from '@/lib/time/centre-time';
@@ -100,6 +104,59 @@ describe('automatic checkout resolution', () => {
       WHERE student_id = ${student.id} AND capture_method = 'inferred'
     `);
     expect((count.rows[0] as { n: number }).n).toBe(1);
+  });
+
+  it('never infers a departure earlier than the arrival, and does not loop doing it', async () => {
+    const centre = await makeCentre(db, { timezone: TZ, closeTime: '19:00:00' });
+    const student = await makeStudent(db, centre.id);
+
+    // Checked in at 20:30 — after closing, and after the 60-minute grace. Stamping the
+    // inferred check-out at 19:00 would give them a departure before their arrival, and
+    // because the toggle rule reads the LATEST event by occurred_at, that check-out
+    // would never become the latest — so the student stayed open and qualified again on
+    // every subsequent run. /floor sweeps every ten seconds, so this wrote a row every
+    // ten seconds into a table with no DELETE.
+    await addEvent(db, {
+      centreId: centre.id, studentId: student.id, type: 'check_in',
+      occurredAt: instantFromLocal(DAY, { hour: 20, minute: 30 }, TZ),
+    });
+
+    for (const minute of [31, 32, 33, 40]) {
+      const results = await resolveOpenSessions(
+        instantFromLocal(DAY, { hour: 20, minute }, TZ),
+        asDb(db),
+      );
+      expect(results.find((r) => r.centreId === centre.id)!.inserted).toBe(0);
+    }
+
+    const count = await db.execute(sql`
+      SELECT count(*)::int n FROM attendance_event WHERE student_id = ${student.id}
+    `);
+    // The one real check-in, and nothing else. The late arrival is left for staff.
+    expect((count.rows[0] as { n: number }).n).toBe(1);
+  });
+
+  it('still closes a normal session on the same day as a late arrival', async () => {
+    const centre = await makeCentre(db, { timezone: TZ, closeTime: '19:00:00' });
+    const early = await makeStudent(db, centre.id, { firstName: 'Early' });
+    const late = await makeStudent(db, centre.id, { firstName: 'Late' });
+
+    await addEvent(db, {
+      centreId: centre.id, studentId: early.id, type: 'check_in',
+      occurredAt: instantFromLocal(DAY, { hour: 17, minute: 0 }, TZ),
+    });
+    await addEvent(db, {
+      centreId: centre.id, studentId: late.id, type: 'check_in',
+      occurredAt: instantFromLocal(DAY, { hour: 20, minute: 30 }, TZ),
+    });
+
+    const results = await resolveOpenSessions(
+      instantFromLocal(DAY, { hour: 20, minute: 45 }, TZ),
+      asDb(db),
+    );
+    const centreResult = results.find((r) => r.centreId === centre.id)!;
+    expect(centreResult.inserted).toBe(1);
+    expect(centreResult.studentIds).toEqual([early.id]);
   });
 
   it('leaves an already checked-out student alone', async () => {
@@ -262,5 +319,72 @@ describe('automatic checkout resolution', () => {
     );
     expect(results.find((r) => r.centreId === east.id)!.inserted).toBe(1);
     expect(results.find((r) => r.centreId === west.id)!.inserted).toBe(0);
+  });
+});
+
+describe('the nightly cron sweep', () => {
+  let db: TestDb;
+  let cleanup: () => Promise<void>;
+
+  beforeAll(async () => {
+    ({ db, cleanup } = await createTestDb());
+  });
+  afterAll(() => cleanup());
+
+  async function inferredCount(studentId: string) {
+    const rows = await db.execute(sql`
+      SELECT count(*)::int AS n FROM attendance_event
+      WHERE student_id = ${studentId} AND capture_method = 'inferred'
+    `);
+    return (rows.rows[0] as { n: number }).n;
+  }
+
+  it('closes yesterday when the daily run drifts past local midnight', async () => {
+    const centre = await makeCentre(db, { timezone: TZ, closeTime: '19:00:00' });
+    const student = await makeStudent(db, centre.id);
+    await addEvent(db, {
+      centreId: centre.id,
+      studentId: student.id,
+      type: 'check_in',
+      occurredAt: instantFromLocal(DAY, { hour: 18, minute: 0 }, TZ),
+    });
+
+    // Hobby fires only *within* the scheduled hour, so a 22:00-local run can land here.
+    const drifted = instantFromLocal('2026-05-13', { hour: 0, minute: 30 }, TZ);
+
+    // A single-day sweep computes the *new* day's close time and finds nothing.
+    expect((await resolveOpenSessions(drifted, asDb(db)))[0]!.inserted).toBe(0);
+    expect(await inferredCount(student.id)).toBe(0);
+
+    const results = await resolveRecentOpenSessions(drifted, asDb(db));
+    expect(results.find((r) => r.centreId === centre.id)!.inserted).toBe(1);
+
+    // Stamped at the closing time it belongs to, not the day the job ran.
+    const rows = await db.execute(sql`
+      SELECT (occurred_at AT TIME ZONE ${TZ})::text AS local_time
+      FROM attendance_event
+      WHERE student_id = ${student.id} AND capture_method = 'inferred'
+    `);
+    expect((rows.rows[0] as { local_time: string }).local_time).toContain(`${DAY} 19:00:00`);
+  });
+
+  it('reports one row per centre and inserts nothing on a second run', async () => {
+    const centre = await makeCentre(db, { timezone: TZ, closeTime: '19:00:00' });
+    const student = await makeStudent(db, centre.id);
+    await addEvent(db, {
+      centreId: centre.id,
+      studentId: student.id,
+      type: 'check_in',
+      occurredAt: instantFromLocal(DAY, { hour: 18, minute: 0 }, TZ),
+    });
+    const at = instantFromLocal(DAY, { hour: 22, minute: 0 }, TZ);
+
+    const first = await resolveRecentOpenSessions(at, asDb(db));
+    expect(first.filter((r) => r.centreId === centre.id)).toHaveLength(1);
+    expect(first.find((r) => r.centreId === centre.id)!.inserted).toBe(1);
+
+    const second = await resolveRecentOpenSessions(at, asDb(db));
+    expect(second.find((r) => r.centreId === centre.id)!.inserted).toBe(0);
+    expect(await inferredCount(student.id)).toBe(1);
   });
 });

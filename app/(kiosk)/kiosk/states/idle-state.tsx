@@ -8,10 +8,13 @@ export function IdleState({
   centreName,
   timezone,
   onFindName,
+  onStaffShifts,
 }: {
   centreName: string;
   timezone: string;
   onFindName: () => void;
+  /** Null hides the staff strip entirely — see KioskPage on who gets it. */
+  onStaffShifts: (() => void) | null;
 }) {
   const [now, setNow] = useState<Date | null>(null);
   const [exiting, setExiting] = useState(false);
@@ -42,7 +45,7 @@ export function IdleState({
 
       <div className="flex flex-1 flex-col items-center justify-center gap-12">
         <h1 className="max-w-4xl text-center text-6xl font-bold leading-tight">
-          Tap your card or find your name
+          Find your name to check in or out
         </h1>
 
         <button
@@ -54,23 +57,37 @@ export function IdleState({
         </button>
 
         {/* The screen never asks which one — it works out whether this is an arrival or
-            a departure. Saying so is the only thing that was missing: a student who
-            wanted to leave had no way to know this was also the way out. */}
+            a departure. Saying so still matters: a student who wants to leave has no
+            other way to know this is also the way out. */}
         <p className="text-2xl text-slate-400">
-          Hold your card under the scanner — the same way in and out
+          The same button both ways — coming in and going home
         </p>
       </div>
 
-      {/* Deliberately quiet next to the 140px name button: staff know it is here, and a
-          child has no reason to reach for it. Unauthenticated, so the confirm step in
-          ExitPanel is what stops a stray press. */}
-      <div className="flex justify-end">
+      {/* The bottom strip is the staff end of the screen. Both buttons are deliberately
+          quiet next to the 140px name button — a child has no reason to reach for either,
+          and neither is authenticated, which is why the exit keeps its confirm step. */}
+      <div className="flex items-center justify-between gap-4">
+        {onStaffShifts ? (
+          // The only way to start or end a shift: /floor no longer offers it. Large
+          // enough to hit while holding a coat, small enough not to compete with the
+          // student button above it.
+          <button
+            type="button"
+            onClick={onStaffShifts}
+            className="min-h-[72px] rounded-xl border-2 border-slate-600 px-8 text-2xl font-semibold text-slate-200 active:scale-[0.98] hover:border-slate-400 hover:text-white"
+          >
+            Staff clock in / out
+          </button>
+        ) : (
+          <span />
+        )}
         <button
           type="button"
           onClick={() => setExiting(true)}
           className="min-h-[44px] rounded-lg px-4 text-base font-medium text-slate-500 hover:text-slate-300"
         >
-          Staff
+          Exit kiosk
         </button>
       </div>
 

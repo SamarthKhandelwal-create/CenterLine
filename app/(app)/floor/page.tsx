@@ -3,17 +3,14 @@ import { db } from '@/db';
 import { student as studentT } from '@/db/schema';
 import { requireSession } from '@/lib/auth/current-user';
 import { getFloorData } from '@/lib/attendance/floor';
-import { currentShift } from '@/lib/staff/shifts';
-import { formatLocalTime } from '@/lib/time/centre-time';
 import { guardiansForStudents } from '@/lib/sms/send';
 import { FloorBoard } from './floor-board';
 
 export const dynamic = 'force-dynamic';
 
 export default async function FloorPage() {
-  const { user, centre } = await requireSession();
+  const { centre } = await requireSession();
   const { present, pastCloseGrace } = await getFloorData(centre);
-  const shift = await currentShift(user.id);
 
   // Active students who are not currently in the building, for front-desk check-in.
   const roster = await db
@@ -51,11 +48,6 @@ export default async function FloorPage() {
       centreName={centre.name}
       notPresent={notPresent}
       pastCloseGrace={pastCloseGrace}
-      shift={{
-        userName: user.name,
-        shiftStartedAtMs: shift?.startedAt.getTime() ?? null,
-        startedAtLabel: shift ? formatLocalTime(shift.startedAt, centre.timezone) : null,
-      }}
     />
   );
 }

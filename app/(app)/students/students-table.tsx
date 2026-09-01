@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { RemoveStudentButton } from './remove-student-button';
 
 export type StudentRow = {
   id: string;
@@ -69,6 +70,7 @@ export function StudentsTable({ students }: { students: StudentRow[] }) {
               <TableHead>Guardian</TableHead>
               <TableHead>Release</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -116,11 +118,18 @@ export function StudentsTable({ students }: { students: StudentRow[] }) {
                     <Badge variant="secondary">Inactive</Badge>
                   )}
                 </TableCell>
+                <TableCell className="text-right">
+                  <RemoveStudentButton
+                    studentId={s.id}
+                    name={`${s.firstName} ${s.lastInitial}.`}
+                    status={s.status}
+                  />
+                </TableCell>
               </TableRow>
             ))}
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                   No students match that search.
                 </TableCell>
               </TableRow>

@@ -137,7 +137,7 @@ async function main() {
       await page.waitForURL(/\/kiosk$/, { timeout: 30_000 });
       await page.waitForLoadState('networkidle');
     }
-    check('kiosk idle shows the prompt', await page.getByText('Tap your card or find your name').isVisible());
+    check('kiosk idle shows the prompt', await page.getByText('Find your name to check in or out').isVisible());
     check('kiosk offers Find my name', await page.getByRole('button', { name: 'Find my name' }).isVisible());
     check('the PIN option is gone', (await page.getByRole('button', { name: /PIN/i }).count()) === 0);
 
@@ -159,7 +159,7 @@ async function main() {
     };
     const backToIdle = () =>
       page.waitForFunction(
-        () => /Tap your card or find your name/.test(document.body.innerText),
+        () => /Find your name to check in or out/.test(document.body.innerText),
         undefined,
         { timeout: 6000 },
       );
@@ -225,7 +225,7 @@ async function main() {
     await kp.getByRole('button', { name: 'Back' }).click();
     await kp.waitForTimeout(300);
 
-    await kp.getByRole('button', { name: 'Staff' }).click();
+    await kp.getByRole('button', { name: 'Exit kiosk' }).click();
     check('the exit asks for confirmation first',
       await kp.getByRole('dialog', { name: 'Exit kiosk mode' }).isVisible());
 
@@ -234,7 +234,7 @@ async function main() {
     check('cancelling leaves the tablet in kiosk mode',
       await kp.getByRole('button', { name: 'Find my name' }).isVisible());
 
-    await kp.getByRole('button', { name: 'Staff' }).click();
+    await kp.getByRole('button', { name: 'Exit kiosk' }).click();
     await kp.getByRole('button', { name: 'Exit kiosk mode' }).click();
     // The route sends the tablet to /login. This context is still signed in as staff
     // (it had to be, to enrol the device), and /login forwards a live session to
@@ -296,35 +296,66 @@ async function main() {
     }
   });
 
-  await section('Staff shifts', async () => {
+  await section('Staff shifts start and end at the kiosk, not in the app', async () => {
+    // The app no longer offers either half of it: no bar on /floor, no button on /staff.
     await page.goto(`${BASE}/floor`);
     await page.waitForLoadState('networkidle');
-
-    const bar = page.locator('section[aria-label="Your shift"]');
-    check('floor shows the shift bar', (await bar.count()) === 1);
-
-    const wasOnShift = (await bar.getByRole('button', { name: 'Clock out' }).count()) > 0;
-    if (!wasOnShift) {
-      await bar.getByRole('button', { name: 'Clock in' }).click();
-      await page.waitForTimeout(800);
-      check('clocking in switches the bar to on shift',
-        (await bar.getByRole('button', { name: 'Clock out' }).count()) > 0);
-    }
+    check('floor no longer has a shift bar',
+      (await page.locator('section[aria-label="Your shift"]').count()) === 0);
+    check('floor offers no clock in',
+      (await page.getByRole('button', { name: /^Clock in$/ }).count()) === 0);
 
     await page.goto(`${BASE}/staff`);
     await page.waitForLoadState('networkidle');
-    const body = (await page.textContent('body')) ?? '';
-    check('staff log lists shifts', /shifts? ·/.test(body) || /No shifts recorded/.test(body));
-    check('staff log shows somebody on shift now', /on shift now/.test(body), body.slice(0, 80));
+    check('the shift log offers no close button',
+      (await page.getByRole('button', { name: 'Close shift' }).count()) === 0);
+    const log = (await page.textContent('body')) ?? '';
+    check('staff log still lists shifts', /shifts? ·/.test(log) || /No shifts recorded/.test(log));
 
-    // Leave the demo data as we found it.
-    if (!wasOnShift) {
-      await page.goto(`${BASE}/floor`);
-      await page.locator('section[aria-label="Your shift"]')
-        .getByRole('button', { name: 'Clock out' })
-        .click();
-      await page.waitForTimeout(800);
-    }
+    // The kiosk is now the only way in or out of a shift.
+    await page.goto(`${BASE}/kiosk`);
+    await page.waitForLoadState('networkidle');
+    const clockButton = page.getByRole('button', { name: 'Staff clock in / out' });
+    check('the kiosk offers staff clock in / out', await clockButton.isVisible());
+
+    await clockButton.click();
+    await page.waitForTimeout(300);
+    const panel = (await page.textContent('body')) ?? '';
+    check('the staff panel names the people and which way they go',
+      /Clock in/.test(panel) && /Staff — clock in or out/.test(panel));
+
+    // Toggle one named person, then toggle them straight back, so the demo data is left
+    // as it was found. Named rather than "the first tile" because the tiles re-sort on
+    // shift status — the first tile after the toggle is somebody else.
+    const who = 'Grace Okonkwo';
+    const tile = () => page.getByRole('button', { name: new RegExp(`^${who}`) });
+    const label = (await tile().textContent()) ?? '';
+    const wasOnShift = /Clock out/.test(label);
+    await tile().click();
+    await page.waitForFunction(
+      () => /Clocked in|Clocked out|front desk/.test(document.body.innerText),
+      undefined,
+      { timeout: 15_000 },
+    );
+    const result = (await page.textContent('body')) ?? '';
+    check(`a tap ${wasOnShift ? 'ended' : 'started'} the shift`,
+      result.includes(wasOnShift ? 'Clocked out' : 'Clocked in'), result.slice(0, 60).trim());
+
+    await page.waitForFunction(
+      () => /Find your name to check in or out/.test(document.body.innerText),
+      undefined,
+      { timeout: 6000 },
+    );
+    check('the staff result returns the tablet to the student screen', true);
+
+    await page.getByRole('button', { name: 'Staff clock in / out' }).click();
+    await page.waitForTimeout(300);
+    check('the panel reflects the change on the next visit',
+      /Clock out/.test((await tile().textContent()) ?? '') !== wasOnShift);
+
+    // Put them back the way they were.
+    await tile().click();
+    await page.waitForTimeout(1500);
   });
 
   await section('Import a 200-row roster', async () => {

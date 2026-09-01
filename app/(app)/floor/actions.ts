@@ -36,6 +36,7 @@ export async function staffCheckOutAction(formData: FormData) {
   });
 
   await sendPickupReady({ studentId: parsed.data.studentId, centre, at });
+
   revalidatePath('/floor');
   revalidatePath('/day');
   return { ok: true };

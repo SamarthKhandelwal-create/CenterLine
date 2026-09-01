@@ -16,7 +16,11 @@
     "db:reset": "rm -rf .pgdata && tsx db/seed.ts",
     "smoke": "tsx scripts/smoke.ts",
     "check": "tsc --noEmit && eslint . && vitest run",
-    "check:data": "tsx scripts/check-data.ts"
+    "check:data": "tsx scripts/check-data.ts",
+    "staff:add": "tsx scripts/add-shared-staff.ts",
+    "mason:reset": "tsx scripts/reset-mason.ts",
+    "staff:no-password": "tsx scripts/clear-staff-passwords.ts",
+    "poster": "tsx scripts/poster.tsx"
   },
   "dependencies": {
     "@neondatabase/serverless": "1.1.0",
@@ -26,6 +30,7 @@
     "drizzle-orm": "0.45.2",
     "lucide-react": "0.469.0",
     "next": "15.5.23",
+    "nodemailer": "^9.0.5",
     "postgres": "3.4.5",
     "qrcode": "1.5.4",
     "react": "19.2.0",
@@ -40,6 +45,7 @@
     "@electric-sql/pglite": "0.2.17",
     "@eslint/eslintrc": "3.2.0",
     "@types/node": "22.10.5",
+    "@types/nodemailer": "^8.0.1",
     "@types/qrcode": "1.5.5",
     "@types/react": "19.0.7",
     "@types/react-dom": "19.0.3",

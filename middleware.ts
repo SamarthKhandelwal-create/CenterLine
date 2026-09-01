@@ -12,7 +12,16 @@ import { KIOSK_COOKIE, SESSION_COOKIE, readKioskToken, readSessionToken } from '
 const ASSISTANT_ALLOWED = ['/floor', '/emergency', '/kiosk'];
 
 // /api/auth is how you sign in and out, so it cannot require a session to reach.
-const PUBLIC = ['/login', '/api/auth', '/api/cron', '/api/webhooks'];
+// The two reset screens are for people who cannot sign in by definition, so they
+// belong here for exactly the same reason /login does.
+const PUBLIC = [
+  '/login',
+  '/forgot-password',
+  '/reset-password',
+  '/api/auth',
+  '/api/cron',
+  '/api/webhooks',
+];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

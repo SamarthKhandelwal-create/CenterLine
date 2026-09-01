@@ -114,7 +114,7 @@ async function main() {
     await page.waitForURL(/\/kiosk$/, { timeout: 30_000 });
     await page.waitForLoadState('networkidle');
   }
-  check('kiosk idle screen', await page.getByText('Tap your card or find your name').isVisible());
+  check('kiosk idle screen', await page.getByText('Find your name to check in or out').isVisible());
   await page.getByRole('button', { name: 'Find my name' }).click();
   const tiles = await page.locator('button').count();
   check('name grid lists students', tiles > 10, `${tiles} tiles`);

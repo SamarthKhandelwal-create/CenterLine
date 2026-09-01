@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { addEvent, asDb, createTestDb, makeCentre, makeStudent, type TestDb } from './helpers/db';
-import { toggleAttendance } from '@/lib/attendance/commands';
+import { recordEvent, toggleAttendance } from '@/lib/attendance/commands';
+import { resolveTapAndToggle } from '@/lib/kiosk/resolve';
 import { lastEventOnLocalDay, presentStudents } from '@/lib/attendance/queries';
 import { instantFromLocal } from '@/lib/time/centre-time';
 
@@ -170,6 +171,40 @@ describe('check-in / check-out inference rule', () => {
       SELECT count(*)::int n FROM attendance_event WHERE student_id = ${student.id}
     `);
     expect((count.rows[0] as { n: number }).n).toBe(1);
+  });
+
+  it('tells the kiosk when a result was replayed rather than recorded', async () => {
+    const centre = await makeCentre(db, { timezone: TZ });
+    const student = await makeStudent(db, centre.id);
+    const at = instantFromLocal('2026-05-12', { hour: 15, minute: 0 }, TZ);
+
+    // Staff check the student in at the desk; the child walks over and taps their tile,
+    // which reads "Check out" because they are present.
+    await recordEvent(
+      {
+        studentId: student.id, centreId: centre.id, type: 'check_in',
+        occurredAt: at, captureMethod: 'staff',
+      },
+      asDb(db),
+    );
+
+    const tooSoon = await resolveTapAndToggle(
+      { centre, studentId: student.id, at: new Date(at.getTime() + 15_000) },
+      asDb(db),
+    );
+    // Inside the grace window nothing is recorded and the previous result comes back.
+    // `repeated` is what stops the screen answering "Checked in" to a tile that said
+    // Check out, which reads as the kiosk refusing to let the student leave.
+    expect(tooSoon).toMatchObject({ ok: true, action: 'check_in', repeated: true });
+
+    // Once past the grace window a real check-out is recorded. Timed at 26 minutes
+    // rather than 26 seconds because the kiosk also refuses to end a session that has
+    // not run its allowance — see tests/early-departure.test.ts.
+    const afterGrace = await resolveTapAndToggle(
+      { centre, studentId: student.id, at: new Date(at.getTime() + 26 * 60_000) },
+      asDb(db),
+    );
+    expect(afterGrace).toMatchObject({ ok: true, action: 'check_out', repeated: false });
   });
 
   it('collapses a doubled check-in into one open session', async () => {

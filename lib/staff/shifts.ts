@@ -8,6 +8,8 @@ export type ShiftRow = {
   id: string;
   userId: string;
   userName: string;
+  /** Two people called "Sam" are only told apart by this in an export. */
+  userEmail: string;
   role: UserRole;
   startedAt: Date;
   endedAt: Date | null;
@@ -76,6 +78,46 @@ export async function clockOut(
   return updated.length > 0;
 }
 
+export type StaffShiftStatus = {
+  userId: string;
+  name: string;
+  role: UserRole;
+  /** The open shift, or null when this person is off shift. */
+  shiftId: string | null;
+  startedAt: Date | null;
+};
+
+/**
+ * Everyone on this centre's staff, with their open shift if they have one. Drives the
+ * kiosk clock in / out panel, which needs both the people and their current state in
+ * one pass — the tablet has no session to ask "who am I" about.
+ *
+ * Names only. No email, no role beyond the word, and certainly no password hash: the
+ * same rule the student roster on that screen follows.
+ */
+export async function staffShiftStatus(
+  centreId: string,
+  db: Db = defaultDb,
+): Promise<StaffShiftStatus[]> {
+  const rows = await db
+    .select({
+      userId: userT.id,
+      name: userT.name,
+      role: userT.role,
+      shiftId: staffShift.id,
+      startedAt: staffShift.startedAt,
+    })
+    .from(userT)
+    .leftJoin(
+      staffShift,
+      and(eq(staffShift.userId, userT.id), isNull(staffShift.endedAt)),
+    )
+    .where(eq(userT.centreId, centreId))
+    .orderBy(userT.name);
+
+  return rows;
+}
+
 /**
  * Shifts that started in [from, to), newest first. Always scoped to one centre — the
  * two centres in this system never see each other's data, staff included.
@@ -91,6 +133,7 @@ export async function shiftsInRange(
       id: staffShift.id,
       userId: staffShift.userId,
       userName: userT.name,
+      userEmail: userT.email,
       role: userT.role,
       startedAt: staffShift.startedAt,
       endedAt: staffShift.endedAt,
@@ -122,6 +165,7 @@ export async function shiftsInRange(
     id: r.id,
     userId: r.userId,
     userName: r.userName,
+    userEmail: r.userEmail,
     role: r.role,
     startedAt: r.startedAt,
     endedAt: r.endedAt,

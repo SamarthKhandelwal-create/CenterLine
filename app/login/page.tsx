@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth/current-user';
 import { Button } from '@/components/ui/button';
@@ -16,10 +17,10 @@ const MESSAGES: Record<string, string> = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; error?: string }>;
+  searchParams: Promise<{ next?: string; error?: string; reset?: string }>;
 }) {
   if (await getSession()) redirect('/floor');
-  const { next, error } = await searchParams;
+  const { next, error, reset } = await searchParams;
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/40 p-6">
@@ -32,6 +33,14 @@ export default async function LoginPage({
           <CardContent className="pt-6">
             {/* A plain form post, not a Server Action: this page has to work from a
                 tab that was open across a deploy, since signing in is how you recover. */}
+            {reset ? (
+              <p
+                role="status"
+                className="mb-4 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
+              >
+                Password changed. Sign in with your new password.
+              </p>
+            ) : null}
             <form method="post" action="/api/auth/login" className="space-y-4">
               {next ? <input type="hidden" name="next" value={next} /> : null}
               <div className="space-y-2">
@@ -64,6 +73,12 @@ export default async function LoginPage({
               <Button type="submit" className="w-full">
                 Sign in
               </Button>
+              <Link
+                href="/forgot-password"
+                className="block text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
+              >
+                Forgot your password?
+              </Link>
             </form>
           </CardContent>
         </Card>

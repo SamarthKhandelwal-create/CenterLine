@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/db';
 import {
@@ -161,6 +161,80 @@ async function upsertGuardian(
     })
     .returning();
   await db.insert(studentGuardian).values({ studentId, guardianId: g!.id, isPrimary: true });
+}
+
+export type RemoveStudentState = {
+  error?: string;
+  ok?: boolean;
+  /** Which of the two things actually happened, so the UI can say so plainly. */
+  mode?: 'deleted' | 'deactivated';
+  eventCount?: number;
+};
+
+/**
+ * Removes a student, in the only two senses the compliance model allows.
+ *
+ * A student who has ever been checked in CANNOT be deleted, and this is enforced two
+ * levels down rather than by this function's good manners: `attendance_event.student_id`
+ * cascades on delete, and `db/views.sql` puts a BEFORE DELETE trigger on that table
+ * which raises. So a hard delete of a student with history aborts the transaction. That
+ * is the correct outcome — the attendance log is the evidence the centre is inspected
+ * on, and a child leaving must not erase the record that they were ever here.
+ *
+ * So: history means deactivate, which is what "removed from the roster" means in
+ * practice. They leave the floor, the kiosk and the active roster, and their record
+ * stays. No history means the row was a mistake — a bad import line, a typo — and it
+ * is genuinely deleted, along with its credentials, guardian links and import keys.
+ */
+export async function removeStudentAction(formData: FormData): Promise<RemoveStudentState> {
+  const { centre } = await requireInstructor();
+  const id = z.string().uuid().safeParse(formData.get('studentId'));
+  if (!id.success) return { error: 'Invalid student.' };
+
+  // Scoped to the centre, so a forged id cannot reach another centre's roster.
+  const owned = await db
+    .select({ id: studentT.id })
+    .from(studentT)
+    .where(and(eq(studentT.id, id.data), eq(studentT.centreId, centre.id)))
+    .limit(1);
+  if (!owned[0]) return { error: 'That student is not in this centre.' };
+
+  // Every event, not just the live ones: a superseded or voided row is still a record
+  // that this child was here, and deleting the student would take it with them.
+  const counted = await db.execute(sql`
+    SELECT count(*)::int AS n FROM attendance_event WHERE student_id = ${id.data}
+  `);
+  const eventCount = (counted.rows[0] as { n: number }).n;
+
+  if (eventCount > 0) {
+    await db
+      .update(studentT)
+      .set({ status: 'inactive' })
+      .where(and(eq(studentT.id, id.data), eq(studentT.centreId, centre.id)));
+    revalidatePath('/students');
+    revalidatePath('/floor');
+    return { ok: true, mode: 'deactivated', eventCount };
+  }
+
+  await db.transaction(async (tx) => {
+    // credential, student_guardian and student_import_key all cascade from student.
+    await tx
+      .delete(studentT)
+      .where(and(eq(studentT.id, id.data), eq(studentT.centreId, centre.id)));
+
+    // A guardian exists only to be somebody's contact. Once their last child is gone
+    // the row is a stranded phone number, so it goes too — deliberately after the
+    // delete, and only when nothing else points at them (siblings keep theirs).
+    await tx.execute(sql`
+      DELETE FROM guardian g
+      WHERE g.centre_id = ${centre.id}
+        AND NOT EXISTS (SELECT 1 FROM student_guardian sg WHERE sg.guardian_id = g.id)
+    `);
+  });
+
+  revalidatePath('/students');
+  revalidatePath('/floor');
+  return { ok: true, mode: 'deleted', eventCount: 0 };
 }
 
 /** Revokes the old QR credential and issues a new one, for a lost card. */

@@ -50,6 +50,33 @@ export const user = pgTable(
   (t) => [uniqueIndex('user_email_unique').on(sql`lower(${t.email})`)],
 );
 
+/**
+ * Single-use password reset tokens, emailed to the address on the account.
+ *
+ * Only the HMAC is stored, the same posture as `credential.token_hash` — a leaked
+ * database gives an attacker nothing they can put in a URL. Rows are kept after use
+ * rather than deleted so that a second click on the same link can be told apart from
+ * a link that never existed, and so a reset shows up in the record at all.
+ */
+export const passwordResetToken = pgTable(
+  'password_reset_token',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /** Null means outstanding. Set on redemption, and on supersession by a newer request. */
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('password_reset_token_hash_unique').on(t.tokenHash),
+    index('password_reset_token_user_idx').on(t.userId, t.createdAt.desc()),
+  ],
+);
+
 export const student = pgTable(
   'student',
   {
@@ -283,6 +310,7 @@ export type AttendanceEvent = typeof attendanceEvent.$inferSelect;
 export type MessageLog = typeof messageLog.$inferSelect;
 export type StaffShift = typeof staffShift.$inferSelect;
 export type ComplianceAttestation = typeof complianceAttestation.$inferSelect;
+export type PasswordResetToken = typeof passwordResetToken.$inferSelect;
 export type EventType = (typeof eventType.enumValues)[number];
 export type CaptureMethod = (typeof captureMethod.enumValues)[number];
 export type UserRole = (typeof userRole.enumValues)[number];

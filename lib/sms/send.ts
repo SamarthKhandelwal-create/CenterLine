@@ -210,6 +210,30 @@ export async function sendPickupReady(
   );
 }
 
+/**
+ * Has the not-arrived sweep already run for this centre on its local day containing `at`?
+ *
+ * The cron's local-hour gate is a window rather than an exact hour (see the route), so
+ * this is what keeps the sweep to once per centre per day. It reads `message_log`
+ * rather than tracking state of its own, and counts *any* outcome — a run that logged
+ * only `skipped_no_consent` still ran, and repeating it would gain nothing.
+ */
+export async function notArrivedRanToday(
+  centre: Centre,
+  at: Date,
+  db: Db = defaultDb,
+): Promise<boolean> {
+  const rows = await db.execute(sql`
+    SELECT 1 FROM message_log
+    WHERE centre_id = ${centre.id}
+      AND template = 'not_arrived'
+      AND (sent_at AT TIME ZONE ${centre.timezone})::date
+        = (${at.toISOString()}::timestamptz AT TIME ZONE ${centre.timezone})::date
+    LIMIT 1
+  `);
+  return rows.rows.length > 0;
+}
+
 /** Not-arrived, from the cron. Proactive, so it honours quiet hours. */
 export async function sendNotArrived(
   args: { studentId: string; centre: Centre; at?: Date },

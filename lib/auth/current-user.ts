@@ -7,7 +7,7 @@ import { db } from '@/db';
 import { centre as centreT, user as userT } from '@/db/schema';
 import { env } from '@/lib/env';
 import { KIOSK_COOKIE, SESSION_COOKIE, readKioskToken, readSessionToken } from './session';
-import type { Centre, User } from '@/db/schema';
+import type { Centre, User, UserRole } from '@/db/schema';
 
 export type Session = { user: User; centre: Centre };
 
@@ -45,11 +45,28 @@ export async function requireInstructor(): Promise<Session> {
   return session;
 }
 
+export type KioskDevice = {
+  centre: Centre;
+  label: string;
+  /**
+   * The role of whoever enrolled the tablet. Null on devices enrolled before the token
+   * carried it. Staff clocking is offered only where this is `instructor`, so a tablet
+   * an assistant set up runs the student screen and nothing else.
+   */
+  enrolledByRole: UserRole | null;
+};
+
 /** The kiosk is authorised by a device cookie, never by a staff login. */
-export const getKioskCentre = cache(async (): Promise<Centre | null> => {
+export const getKioskDevice = cache(async (): Promise<KioskDevice | null> => {
   const jar = await cookies();
   const claims = await readKioskToken(jar.get(KIOSK_COOKIE)?.value, env.KIOSK_SECRET);
   if (!claims) return null;
   const rows = await db.select().from(centreT).where(eq(centreT.id, claims.cid)).limit(1);
-  return rows[0] ?? null;
+  const centre = rows[0];
+  if (!centre) return null;
+  return { centre, label: claims.label, enrolledByRole: claims.role ?? null };
 });
+
+export async function getKioskCentre(): Promise<Centre | null> {
+  return (await getKioskDevice())?.centre ?? null;
+}

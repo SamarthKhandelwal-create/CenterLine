@@ -183,23 +183,46 @@ Three things this document previously recorded as settled are no longer true. Ea
 asked for directly, and each is a genuine trade rather than a correction.
 
 - **Timecards are no longer excluded.** "No timecards or payroll" was on the exclusion
-  list; there is now a `staff_shift` table and a Clock in / Clock out bar on `/floor`,
-  with an instructor-only log at `/staff`. It is a record of who was on the floor, not
-  payroll: no rates, no approval, no export. It stays deliberately separate from the
-  account Sign out button in the header — signing out of the app is about a browser
-  session, going off shift is about the building, and neither is evidence of the other.
-  A partial unique index (`staff_shift_one_open_per_user`) makes a double clock-in
-  impossible at the database rather than by convention, which is the same posture as the
-  append-only triggers. Shown to both roles, not assistants only: an instructor is on the
-  floor as much as anyone, and a log with a hole in it is worse than no log.
+  list; there is now a `staff_shift` table, with an instructor-only log at `/staff`. It is
+  a record of who was on the floor, not payroll: no rates and no approval step. (It does
+  now export — see *Staff import and export* — but a CSV of who was in the building is
+  still not a payroll run.) A partial unique index (`staff_shift_one_open_per_user`) makes
+  a double clock-in impossible at the database rather than by convention, which is the
+  same posture as the append-only triggers. Both roles clock in, not assistants only: an
+  instructor is on the floor as much as anyone, and a log with a hole in it is worse than
+  no log.
+
+- **Clocking in and out moved from the app to the kiosk.** It began as a Clock in / Clock
+  out bar on `/floor`, plus a Close shift button on `/staff` for the shift somebody left
+  open overnight. Both are gone. Staff now start and end shifts at the tablet by the door,
+  from a **Staff clock in / out** button on the idle screen.
+
+  The reason is that the bar measured the wrong thing. A shift is about the building, and
+  the bar was reached through a browser session — which meant it could be pressed from a
+  phone on the way home, and that whoever forgot to press it needed somebody else to fix
+  the record from a different screen. The tablet by the door is where arriving and leaving
+  actually happen, and it is the same tap a student makes: one button per person, green
+  when they are on shift, and the system works out which direction it is.
+
+  Two consequences worth stating. The panel appears **only on a tablet an instructor put
+  into kiosk mode** — the enroller's role now travels in the kiosk token, and a device an
+  assistant enrolled runs the student screen alone. And, like everything else on that
+  screen, **the tap is not authenticated**: anybody at the tablet can clock anybody in or
+  out. That is the same trade the exit button makes below, taken deliberately for the same
+  reason — the door is staffed, and a shift log nobody can be bothered to keep is worth
+  less than one anybody can correct with a tap. A centre that wants it locked can put
+  `verifyPassword` behind the tile; `lib/kiosk/staff.ts` and the panel are the only two
+  files involved. The forgotten overnight shift is closed the same way, by tapping that
+  person's tile, which is why `/staff` is now purely a record with no buttons on it.
 
 - **Kiosk mode can be exited, without a password.** Enrolling a device was a first-class
   flow — a route, a page, an action and a 400-day cookie — while un-enrolling had nothing
   at all, so a browser that had once pressed *Start kiosk mode* was pinned to `/kiosk`
   until someone cleared cookies by hand or rotated `KIOSK_SECRET` for every tablet in the
-  deployment. There is now a quiet **Staff** button on the idle screen, a confirmation
-  panel, and `POST /api/kiosk/exit`, which deletes the device cookie and returns the
-  tablet to `/login`.
+  deployment. There is now a quiet **Exit kiosk** button on the idle screen, a
+  confirmation panel, and `POST /api/kiosk/exit`, which deletes the device cookie and
+  returns the tablet to `/login`. (It was labelled *Staff* until the staff clock in / out
+  panel arrived beside it and made that name ambiguous.)
 
   **Stated plainly: this is not authenticated.** Any child who finds the button and taps
   through the confirmation can take the tablet out of kiosk mode. That was an explicit
@@ -254,6 +277,26 @@ asked for directly, and each is a genuine trade rather than a correction.
   Idempotency is unaffected — a second import of the same file still writes nothing, and
   the byte-identical roster hash in `tests/import-idempotency.test.ts` covers it.
 
+- **The floor sweep could write a row every ten seconds, for ever.** Reported as "check
+  out is not working — it just says the student has been checked in". The inferred
+  check-out is stamped at closing time, so a student checked in *after* `close + 60` was
+  given a departure preceding their arrival. The toggle rule reads the latest event by
+  `occurred_at`, so that check-out never became the latest event, the student stayed open,
+  and they qualified for the sweep again on the next run. Latent since the sweep was
+  written — the hourly cron hid it by running hourly, and cron never runs locally at all.
+  Putting the same call on `/floor`'s ten-second tick turned it into an unbounded insert
+  loop against a table with no DELETE by design. `resolveCentreOpenSessions` now only
+  closes sessions whose check-in precedes closing time; a late arrival is left for staff,
+  because inventing a departure we cannot support is the one thing that file exists to
+  avoid. Fixed at the shared function, so the cron is covered too.
+
+- **The kiosk answered "Checked in" to a tile that said "Check out".** Same report. A tap
+  inside the 20-second double-scan grace window records nothing and replays the previous
+  result — correct, and deliberate. But once the tiles started naming the action, replaying
+  "Checked in" read as the screen refusing to let the student leave. The outcome now
+  carries `repeated`, and the result screen says **Already checked in** with "Wait a moment,
+  then tap again". The window itself is unchanged.
+
 - **The kiosk could always check a student out; it just never said so.** The toggle rule
   has decided the direction since the beginning, and present students already sorted first
   and rendered green. But no tile said whether tapping it would check you in or out, so a
@@ -261,10 +304,161 @@ asked for directly, and each is a genuine trade rather than a correction.
   *Check in* / *Check out* caption. The tap is still the action — no confirmation step,
   deliberately.
 
+## Made the crons deployable on Hobby
+
+- **`0 * * * *` is not a schedule Hobby will accept — it fails the deploy.** This was
+  filed under "known limits" as if it were a degradation, but Vercel rejects a
+  more-than-daily cron expression outright rather than downgrading it, so the whole
+  deploy was blocked. Both jobs are now daily: `not-arrived` at 22:00 UTC, `resolve` at
+  02:00 UTC. Neither needs Pro any more.
+
+- **The not-arrived gate was an exact hour match, which only worked at hourly frequency.**
+  `hour !== NOT_ARRIVED_HOUR` fires only if the run lands inside that one local hour.
+  Daily, that is a coin toss the feature loses twice a year at DST, and again whenever
+  Vercel exercises its right to fire a Hobby cron anywhere *within* the scheduled hour —
+  and it loses silently, sending nothing and reporting success. The gate is now "at or
+  past the local hour", held to one run per centre per day by `notArrivedRanToday`, which
+  reads `message_log` rather than keeping state of its own. That pairing behaves correctly
+  at hourly frequency too, so upgrading to Pro is a `vercel.json` edit and nothing else.
+
+- **The resolve sweep would have skipped a day whenever the run drifted past midnight.**
+  It derived both the day to sweep and the "has the grace period elapsed" check from a
+  single instant. Landing at 00:30 local, it computed the *new* day's closing time,
+  concluded the grace period was still running, and closed nothing — and `/floor`'s tick
+  only ever sweeps its own local day, so the previous evening's open sessions would have
+  stayed open permanently. The local day is now an explicit argument, separate from `now`,
+  and the cron sweeps yesterday and today. Shifting the instant back 24h instead was the
+  obvious fix and is wrong: it drags the deadline check back with it, so the run decides
+  yesterday's grace period has not elapsed either.
+
+## Staff import and export
+
+"Import and export staff data" reads two ways — the people, or their hours — so both are
+built. `/staff` now has **Export staff list**, **Export shifts** and **Import staff**.
+
+The two exports are separate files rather than one document with two tables, because the
+staff list is meant to be edited and handed straight back to the importer, and a shift log
+stapled underneath it would break that round trip. A test asserts the round trip: export,
+re-import, everything reads as unchanged. The shift export defaults to 90 days where the
+screen shows 14 — the reason to open a spreadsheet is usually a question the screen cannot
+answer.
+
+Import matches on **email and nothing else**. Students needed a matching cascade because a
+child has no identifier of their own; a member of staff already has one, and it is already
+globally unique, so there is no fuzzy tier here and no ambiguous outcome — an address not
+already in this centre is a new account, full stop.
+
+Decisions inside it, in rough order of how much they would hurt to get wrong:
+
+- **A file never carries a password.** New accounts are given a generated temporary
+  password, shown once on the result screen and unrecoverable afterwards, exactly as QR
+  cards are minted rather than reprinted. An existing account's hash is never touched:
+  renaming a colleague from a spreadsheet must not sign them out of their own account.
+- **An unrecognised role means assistant, and says so.** Instructor sees the whole roster,
+  every guardian phone number and the compliance record; guessing upward from an
+  unfamiliar job title is the one mistake this must never make. "Lead tutor" reads both
+  ways, so it takes the smaller of the two and warns. An unrecognised role also never
+  *demotes* somebody already here — the default exists to keep a new account small, not to
+  strip an instructor because the column said "Staff".
+- **The importer cannot lock the centre out of itself.** It refuses to demote the person
+  running it, and refuses any demotion that would leave the centre with zero instructors —
+  counted across the whole plan before a single write, because the answer depends on every
+  row at once. Both are enforced in the commit against the database, never from the plan:
+  the plan makes a round trip through the browser between review and commit, and the roles
+  in it decide who can see this centre's data. The actor comes from the session cookie.
+- **An email belonging to another centre is refused, not stolen.** The unique index is
+  global, so the insert would otherwise abort the whole transaction with a constraint
+  error. Detecting it needs one query that crosses the centre boundary; it selects only the
+  addresses that were already in the file and nothing else — no name, no id, nothing about
+  who they are. That is the least it can ask and still explain the refusal.
+- **A repeated email blocks both copies.** Letting the last row win would silently pick
+  somebody's role for them.
+- **Nobody is ever removed.** `user` has no inactive state, so absence from the file means
+  nothing at all — the same rule as the roster importer, and more so here because
+  `staff_shift` rows point at these accounts.
+
+Passing over: there is still no way to *create* a staff account one at a time, which is
+now the odd gap — a centre hiring one person has to write a two-row spreadsheet. The
+importer is where the safety rules live, so a form should call into the same commit rather
+than insert directly.
+
+## Early departures
+
+The brief: a student who leaves more than five minutes short of their allowance should
+raise an alarm with the instructors and assistants — under 25 minutes for one subject,
+under 50 for two.
+
+Decisions inside it:
+
+- **Five minutes of grace per subject, not five minutes flat.** Built flat first, which
+  put the two-subject threshold at 55; confirmed as ten minutes for two subjects, so the
+  threshold is 50 — which is what the brief's "leaves 50 minutes before" said literally.
+  The grace now scales with the session: a two-subject student is in the building twice as
+  long, and twice as much of it can go missing before it means anything.
+
+  The rule takes the allowance, not a subject count, because `student.expected_minutes` is
+  the only figure the alert keeps and an import may set it to something that is not a clean
+  multiple of 30. So the subject count is reconstructed by rounding — a 45-minute allowance
+  gets two subjects' worth of grace, being closer to two sessions than to one. Changing the
+  shape of this was a one-file edit plus its tests, which is the whole argument for the
+  rule living in a single module.
+
+- **Email, plus a banner on `/floor`.** Every other notification in the system goes to a
+  guardian by SMS, and staff have no phone number on file — but they do have an email
+  address, because password reset needs one, so `lib/email` was already there. The banner
+  is what makes it actionable while somebody is still on the floor; the email is what
+  reaches the instructor who was not. Sent to every instructor and assistant at the
+  centre rather than whoever is clocked in: an assistant who forgot to start their shift
+  is still on the floor, and the instructor who was not there is precisely the person who
+  needs to hear about it.
+
+- **Recorded, not derived.** "Who left early today" is computable from `session_v` at any
+  time; "which of those has a person actually seen" is not. The point of the feature is
+  that a short session is noticed by a human, so the verdict is written once with the
+  numbers it was reached from, and carries its own acknowledgement — by name, not as an
+  anonymous dismissal. `check_out_event_id` is unique, which is what makes a retried
+  check-out or two `/floor` boards racing produce one alert and one round of email.
+
+- **Never raised from an inferred check-out.** The nightly sweep stamps a departure at
+  closing time as an estimate. A student who checked in at 6:55 and was closed out at 7:00
+  has a five-minute session on paper and may not have left at all — reporting that as an
+  early departure would be inventing a departure, which is the one thing
+  `lib/attendance/resolve.ts` exists to avoid. Confirming an estimate on `/day` does not
+  raise one either, for the same reason: a confirmation records what time the centre
+  closed, not a departure anybody watched.
+
+- **The banner is scoped to the current centre-local day.** An alert nobody cleared last
+  Tuesday sitting at the top of the board would teach staff to ignore the banner, which
+  costs more than the alert is worth. The row stays in the table, and the email is what
+  carries past the end of the day.
+
+- **The child is told nothing.** The kiosk result screen is identical whether they stayed
+  the full session or not. Telling a nine-year-old at the door that they are leaving early
+  is the staff's call to make, not a tablet's.
+
+- **The seed backfills it.** The seed writes attendance straight into the table rather
+  than going through the check-out path, so without a backfill pass the banner is empty on
+  a fresh install and the feature looks like it was never built. It selects today's
+  observed sessions from `session_v` and judges them with the same `isEarlyDeparture` the
+  application calls — a threshold written into a `WHERE` clause would be a second copy of
+  a rule whose whole point is that there is only one.
+
+Not built: no `/day` column for early departures, and nothing in the CSV or PDF exports.
+The alert is derivable from the attendance already in both — a session shorter than the
+allowance is visible in the durations — and the compliance requirements say nothing about
+session length, so adding a column to an audit document to restate an internal prompt
+seemed like the wrong trade.
+
 ## Known limits
 
-- **Hourly crons need Vercel Pro.** On Hobby, cron is daily-only, so an inferred
-  check-out could appear up to a day late instead of within the hour.
+- **Cron is daily, and one daily trigger cannot serve every timezone.** Hobby rejects any
+  schedule running more than once a day, so `not-arrived` fires at a UTC hour chosen for a
+  US-Eastern centre. A centre far enough west that the trigger lands before its local
+  `NOT_ARRIVED_HOUR` is never messaged — reported as `before_local_hour` in the response
+  rather than dropped silently, but still not messaged. Centres across several timezones
+  need Pro and an hourly schedule; the route already works unmodified at that frequency.
+- **An inferred check-out can appear up to a day late** if nobody opens `/floor` that
+  evening, since the cron is the only other trigger and it runs once a night.
 - **`xlsx@0.18.5`** has known prototype-pollution advisories on the npm build. Mitigated
   by parsing server-side only, with a 5 MB and 5,000-row cap. Worth revisiting the
   distribution source.
@@ -287,7 +481,9 @@ or invoicing, no CRM, no worksheet inventory, no academic progress tracking, no 
 scheduling, no multi-centre management, no design token pipeline, no native apps.
 
 Staff timecards were on that list and are no longer — see *Decisions reversed later*. What
-is built is a shift log, not payroll: no rates, no approvals, no export.
+is built is a shift log, not payroll: no rates and no approval step. It does export now
+(*Staff import and export*), but a CSV of hours is not a pay run and nothing downstream
+of it exists.
 
 Three things I would argue for next, in order:
 
