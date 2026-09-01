@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { sql } from 'drizzle-orm';
-import { db } from '@/db';
-import { user as userT } from '@/db/schema';
-import { verifyPassword } from '@/lib/auth/password';
+import { signIn } from '@/lib/auth/sign-in';
 import { SESSION_COOKIE, SESSION_MAX_AGE, createSessionToken } from '@/lib/auth/session';
 import { env } from '@/lib/env';
 
@@ -46,20 +43,12 @@ export async function POST(request: Request) {
     return back(request, { error: 'missing', next: next ?? '' });
   }
 
-  const rows = await db
-    .select()
-    .from(userT)
-    .where(sql`lower(${userT.email}) = ${email.toLowerCase()}`)
-    .limit(1);
-  const found = rows[0];
-
-  // Same message and comparable timing whether the email is unknown or the password
-  // is wrong, so the form is not an account-enumeration oracle.
-  const ok = found
-    ? await verifyPassword(password, found.passwordHash)
-    : await verifyPassword(password, 'scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAA');
-
-  if (!found || !ok) return back(request, { error: 'invalid', next: next ?? '' });
+  // Same message whether the email is unknown or the password is wrong, so the form is
+  // not an account-enumeration oracle. `signIn` also resolves which centre is meant
+  // when one address holds an account at more than one.
+  const result = await signIn(email, password);
+  if (!result.ok) return back(request, { error: 'invalid', next: next ?? '' });
+  const found = result.user;
 
   const token = await createSessionToken(
     { uid: found.id, cid: found.centreId, role: found.role },

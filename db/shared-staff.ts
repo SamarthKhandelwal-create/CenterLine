@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { centre as centreT, user as userT } from './schema';
 import { hashPassword } from '../lib/auth/password';
 import type { Db } from './client';
@@ -49,9 +49,14 @@ export const SHARED_STAFF = [
     role: 'assistant' as const,
   },
   {
+    /**
+     * The same person as the instructor at Liberty Township North, under the same
+     * address and a different password. Sign-in tells the two apart by which password
+     * verifies, so this must not be set to the one used there.
+     */
     centreName: 'Kumon of Mason West',
     email: 'sonamkhandelwal@ikumon.com',
-    name: 'Mason Instructor',
+    name: 'Sonam Khandelwal',
     passwordEnvVar: 'MASON_INSTRUCTOR_PASSWORD',
     role: 'instructor' as const,
   },
@@ -67,8 +72,12 @@ export const SHARED_STAFF = [
 /**
  * Creates the accounts above, or re-points the password of one that already exists.
  *
- * Idempotent on email — matched case-insensitively, the same way sign-in matches it —
- * so running it twice changes nothing the second time.
+ * Idempotent on (centre, email) — matched case-insensitively, the same way sign-in
+ * matches it — so running it twice changes nothing the second time.
+ *
+ * Scoped to the centre, not the address alone: the same person can hold an account at
+ * two centres, and matching on email would move their existing account to whichever
+ * centre this list happens to name rather than creating the second one.
  */
 export async function createSharedStaff(db: Db): Promise<string[]> {
   const results: string[] = [];
@@ -90,13 +99,18 @@ export async function createSharedStaff(db: Db): Promise<string[]> {
     const existing = await db
       .select({ id: userT.id })
       .from(userT)
-      .where(sql`lower(${userT.email}) = ${person.email.toLowerCase()}`)
+      .where(
+        and(
+          eq(userT.centreId, centreId),
+          sql`lower(${userT.email}) = ${person.email.toLowerCase()}`,
+        ),
+      )
       .limit(1);
 
     if (existing[0]) {
       await db
         .update(userT)
-        .set({ passwordHash, name: person.name, role: person.role, centreId })
+        .set({ passwordHash, name: person.name, role: person.role })
         .where(eq(userT.id, existing[0].id));
       results.push(`${person.email} — updated (password reset, ${person.role} at ${person.centreName})`);
     } else {

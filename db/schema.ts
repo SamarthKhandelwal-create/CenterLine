@@ -47,7 +47,13 @@ export const user = pgTable(
     role: userRole('role').notNull(),
     name: text('name').notNull(),
   },
-  (t) => [uniqueIndex('user_email_unique').on(sql`lower(${t.email})`)],
+  /**
+   * Unique per centre rather than globally: one person can work at two centres under
+   * the same address, holding a separate account — and a separate password — at each.
+   * Sign-in resolves which of them is meant by trying the password against each row
+   * (see app/api/auth/login), so the two must never share one.
+   */
+  (t) => [uniqueIndex('user_centre_email_unique').on(t.centreId, sql`lower(${t.email})`)],
 );
 
 /**

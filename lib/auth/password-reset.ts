@@ -55,6 +55,9 @@ export async function requestPasswordReset(
   const email = args.email.trim().toLowerCase();
   if (!email) return { status: 'no_account' };
 
+  // An address can hold an account at more than one centre. Every one of them gets its
+  // own link, each naming its centre in the email, because there is nothing here that
+  // could pick between them — and picking silently would reset the wrong password.
   const rows = await db
     .select({
       id: userT.id,
@@ -65,18 +68,31 @@ export async function requestPasswordReset(
     })
     .from(userT)
     .innerJoin(centreT, eq(centreT.id, userT.centreId))
-    .where(sql`lower(${userT.email}) = ${email}`)
-    .limit(1);
-
-  const found = rows[0];
-  if (!found) return { status: 'no_account' };
+    .where(sql`lower(${userT.email}) = ${email}`);
 
   // An account with no password is a name on the kiosk, not a way in. Issuing a reset
   // link would quietly turn it into a sign-in account, which is the opposite of what
   // removing the password meant — so it is treated exactly like an unknown address.
   // Giving one a password back is an instructor's decision, made deliberately.
-  if (!canSignIn(found.passwordHash)) return { status: 'no_account' };
+  const targets = rows.filter((r) => canSignIn(r.passwordHash));
+  if (targets.length === 0) return { status: 'no_account' };
 
+  let lastFailure: string | null = null;
+  for (const target of targets) {
+    const outcome = await issueResetFor(target, { origin: args.origin, at }, db);
+    if (outcome.status === 'send_failed') lastFailure = outcome.error;
+  }
+
+  return lastFailure ? { status: 'send_failed', error: lastFailure } : { status: 'sent' };
+}
+
+/** Issues and emails one link, for one account. */
+async function issueResetFor(
+  found: { id: string; email: string; name: string; centreName: string },
+  args: { origin: string; at: Date },
+  db: Db,
+): Promise<ResetRequestOutcome> {
+  const at = args.at;
   const token = generateResetToken();
 
   await db.transaction(async (tx) => {
