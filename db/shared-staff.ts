@@ -50,7 +50,7 @@ export const SHARED_STAFF = [
   },
   {
     centreName: 'Kumon of Mason West',
-    email: 'instructor@kumonofmason',
+    email: 'sonamkhandelwal@ikumon.com',
     name: 'Mason Instructor',
     passwordEnvVar: 'MASON_INSTRUCTOR_PASSWORD',
     role: 'instructor' as const,

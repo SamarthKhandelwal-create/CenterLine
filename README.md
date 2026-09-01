@@ -25,7 +25,7 @@ Sign in at `/login`. The seed creates two independent centres:
 | Kumon of Liberty Township | `liberty@centerline.test` | `password123` | Instructor — everything |
 | Kumon of Liberty Township | `liberty.assistant@centerline.test` | `password123` | Assistant — kiosk, floor, emergency |
 | Kumon of Liberty Township | `staff@kumonofliberty` | `$LIBERTY_STAFF_PASSWORD` | Assistant — the shared front-desk account |
-| Kumon of Mason West | `instructor@kumonofmason` | `$MASON_INSTRUCTOR_PASSWORD` | Instructor — everything |
+| Kumon of Mason West | `sonamkhandelwal@ikumon.com` | `$MASON_INSTRUCTOR_PASSWORD` | Instructor — everything |
 | Kumon of Mason West | `staff@kumonofmason` | `$MASON_STAFF_PASSWORD` | Assistant — the shared front-desk account |
 
 Each centre also has three more assistants, so there is somebody other than yourself to
