@@ -45,6 +45,19 @@ Corrections against my earlier provisional set, now fixed:
 - **Pickup messages bypass quiet hours.** A checkout at 21:05 still notifies the
   guardian, because the child is standing at the door. Only the proactive not-arrived
   cron honours 9pm–8am.
+- **Kiosk search is always visible, and the A-Z jump bar stays.** The find-name screen had
+  a standing rule against text entry: a five-year-old should not have to spell their own
+  name, which is what the jump bar is for. I first built the search opt-in behind a button
+  and flagged the conflict; you asked for the field permanently visible, so it is.
+
+  The rule is now preserved by the tiles and jump bar remaining the child's path, rather
+  than by hiding the field. An empty field filters nothing, so arrival still shows the full
+  roster. The field is deliberately **not** autofocused — focusing on arrival would raise
+  the on-screen keyboard over the tiles for every child who only wants to tap a name. Clear
+  appears only once something has been typed. Filtering hides the jump bar, whose anchors
+  point at a roster no longer fully on screen. Typing restarts the 20-second inactivity
+  timer, which keyed only on entry to the screen and would otherwise clear a half-typed
+  name mid-word.
 - **Siblings: send immediately, suppress the duplicate.** The first sibling's message
   goes out with no delay. A second checkout within ten minutes is recorded as
   `suppressed_sibling` rather than sent — so the guardian is not messaged twice, and the
@@ -52,14 +65,6 @@ Corrections against my earlier provisional set, now fixed:
 
 ## Decisions taken without asking
 
-- **Kiosk search is opt-in, and the A-Z jump bar stays.** A search button was asked for on
-  the sign-in screen. That screen had a standing rule against text entry — a five-year-old
-  should not have to spell their own name — so search is behind a button rather than an
-  always-visible field: closed by default, and closing it restores the full grid and the
-  jump bar. The child's path to their name is unchanged; search is for the adult at the
-  tablet. Filtering hides the jump bar, whose anchors point at a roster that is no longer
-  fully on screen. Typing also restarts the 20-second inactivity timer, which otherwise
-  fires on entry to the screen and would clear a half-typed name.
 - **PGlite for local development and tests.** Docker was not running on this machine, and
   requiring a daemon to run the test suite is friction. PGlite is real Postgres in-process,
   so the window functions, `AT TIME ZONE` arithmetic and triggers are all exercised

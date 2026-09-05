@@ -1,19 +1,21 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { RosterEntry } from '../kiosk-shell';
 
 /**
  * Grid of large tiles. Students currently present sort first (they are the ones
- * about to check out), then alphabetical. The default path is still no text entry —
- * an A-Z jump bar, because a five-year-old should not have to spell.
+ * about to check out), then alphabetical.
  *
- * Search is the deliberate exception, and it is opt-in: closed by default, opened by a
- * button, and closing it restores the full grid. It is there for the adult standing at
- * the tablet — a member of staff checking a child in on a busy afternoon, a parent who
- * knows the name — not for the child, who still has the jump bar. Making it a button
- * rather than an always-visible field is the whole point: nothing on the screen asks a
- * five-year-old to type.
+ * A permanently visible search field sits above the grid, for the adult standing at the
+ * tablet — a member of staff checking a child in on a busy afternoon, a parent who knows
+ * the name. It is not the child's path: tapping a tile is, and the A-Z jump bar is there
+ * so a five-year-old never has to spell their own name to reach one.
+ *
+ * Three things keep the field from taking the screen over. It does not autofocus, so it
+ * never raises a keyboard over the tiles unasked. Clear only appears once something has
+ * been typed. And an empty field filters nothing — the full roster is what a child sees
+ * on arrival, exactly as before.
  *
  * A green tile checks that student OUT; a white one checks them in. The toggle has
  * always worked this way, but the tiles never said which they would do, so a student
@@ -36,7 +38,6 @@ export function FindNameState({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const present = useMemo(() => new Set(presentIds), [presentIds]);
 
@@ -68,15 +69,12 @@ export function FindNameState({
     return 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').filter((l) => set.has(l));
   }, [sorted]);
 
-  // The on-screen keyboard is the reason the button exists, so opening it should not
-  // then require a second tap on the field itself.
-  useEffect(() => {
-    if (searching) inputRef.current?.focus();
-  }, [searching]);
-
-  const closeSearch = () => {
-    setSearching(false);
+  // Deliberately NOT autofocused. Focusing on arrival raises the on-screen keyboard over
+  // the tile grid for every child who only wants to tap their name — the tiles remain the
+  // primary path, and the field waits to be tapped.
+  const clearSearch = () => {
     setQuery('');
+    inputRef.current?.focus();
   };
 
   const jumpTo = (letter: string) => {
@@ -88,8 +86,24 @@ export function FindNameState({
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-900 text-white">
-      <div className="flex items-center justify-between gap-4 p-6">
-        {searching ? (
+      <div className="flex flex-col gap-4 p-6">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-bold">Find your name</h1>
+            <p className="mt-1 text-xl text-slate-400">
+              Green means you are here — tap to check out
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="min-h-[88px] min-w-[160px] rounded-xl border-4 border-white px-6 text-3xl font-bold"
+          >
+            Back
+          </button>
+        </div>
+
+        <div className="flex items-center gap-4">
           <input
             ref={inputRef}
             type="text"
@@ -99,41 +113,28 @@ export function FindNameState({
               onActivity();
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Escape') closeSearch();
+              if (e.key === 'Escape') clearSearch();
             }}
-            placeholder="Type a name"
+            placeholder="Search for a name"
             autoComplete="off"
             aria-label="Search for a student by name"
             className="min-h-[88px] flex-1 rounded-xl bg-white px-6 text-4xl font-bold text-slate-900 placeholder:font-semibold placeholder:text-slate-400"
           />
-        ) : (
-          <div>
-            <h1 className="text-4xl font-bold">Find your name</h1>
-            <p className="mt-1 text-xl text-slate-400">
-              Green means you are here — tap to check out
-            </p>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={() => {
-            onActivity();
-            if (searching) closeSearch();
-            else setSearching(true);
-          }}
-          className="min-h-[88px] min-w-[160px] rounded-xl border-4 border-slate-600 px-6 text-3xl font-bold text-slate-200 active:scale-[0.98] hover:border-slate-400 hover:text-white"
-        >
-          {searching ? 'Clear' : 'Search'}
-        </button>
-
-        <button
-          type="button"
-          onClick={onCancel}
-          className="min-h-[88px] min-w-[160px] rounded-xl border-4 border-white px-6 text-3xl font-bold"
-        >
-          Back
-        </button>
+          {/* Only rendered once there is something to clear. A permanently visible
+              Clear next to an empty field is a button that does nothing. */}
+          {query ? (
+            <button
+              type="button"
+              onClick={() => {
+                clearSearch();
+                onActivity();
+              }}
+              className="min-h-[88px] min-w-[160px] rounded-xl border-4 border-slate-600 px-6 text-3xl font-bold text-slate-200 active:scale-[0.98] hover:border-slate-400 hover:text-white"
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-1 gap-3 overflow-hidden px-6 pb-6">
@@ -174,7 +175,7 @@ export function FindNameState({
         </div>
 
         {/* Hidden while filtering: the anchors it jumps to are for the full roster, and
-            most of them are no longer on screen. It comes back when search is closed. */}
+            most of them are no longer on screen. It returns when the field is emptied. */}
         <div
           className={`w-16 shrink-0 flex-col gap-1 overflow-y-auto ${trimmed ? 'hidden' : 'flex'}`}
         >
