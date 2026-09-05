@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useBarcodeScanner } from '@/hooks/use-barcode-scanner';
 import { IdleState } from './states/idle-state';
@@ -239,11 +239,19 @@ export function KioskShell({
   // Inactivity return to idle, so a child who walks away mid-flow leaves a clean screen.
   // The staff list gets the same treatment for a stronger reason: a list of names with
   // live Clock out buttons is the last thing that should sit on an unattended tablet.
+  //
+  // `activityNonce` restarts the countdown: FindNameState bumps it on every keystroke,
+  // because someone typing a name is plainly still there and being timed out mid-word
+  // loses what they typed. It never disables the timeout — an abandoned search still
+  // clears itself 20 seconds after the last key.
+  const [activityNonce, setActivityNonce] = useState(0);
+  const onActivity = useCallback(() => setActivityNonce((n) => n + 1), []);
+
   useEffect(() => {
     if (state.screen !== 'findName' && state.screen !== 'staff') return;
     const id = setTimeout(() => dispatch({ type: 'idle' }), INACTIVITY_MS);
     return () => clearTimeout(id);
-  }, [state.screen]);
+  }, [state.screen, activityNonce]);
 
   switch (state.screen) {
     case 'idle':
@@ -261,6 +269,7 @@ export function KioskShell({
           roster={roster}
           presentIds={presentIds}
           onSelect={onSelectStudent}
+          onActivity={onActivity}
           onCancel={() => dispatch({ type: 'idle' })}
         />
       );

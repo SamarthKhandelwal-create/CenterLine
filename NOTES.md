@@ -52,6 +52,14 @@ Corrections against my earlier provisional set, now fixed:
 
 ## Decisions taken without asking
 
+- **Kiosk search is opt-in, and the A-Z jump bar stays.** A search button was asked for on
+  the sign-in screen. That screen had a standing rule against text entry — a five-year-old
+  should not have to spell their own name — so search is behind a button rather than an
+  always-visible field: closed by default, and closing it restores the full grid and the
+  jump bar. The child's path to their name is unchanged; search is for the adult at the
+  tablet. Filtering hides the jump bar, whose anchors point at a roster that is no longer
+  fully on screen. Typing also restarts the 20-second inactivity timer, which otherwise
+  fires on entry to the screen and would clear a half-typed name.
 - **PGlite for local development and tests.** Docker was not running on this machine, and
   requiring a daemon to run the test suite is friction. PGlite is real Postgres in-process,
   so the window functions, `AT TIME ZONE` arithmetic and triggers are all exercised
