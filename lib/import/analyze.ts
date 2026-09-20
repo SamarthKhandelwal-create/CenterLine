@@ -68,6 +68,16 @@ function cell(row: string[], index: number | undefined): string {
 }
 
 /**
+ * Whether a wide subject column is ticked for this row. Exports mark enrolment with
+ * "Y", "Yes", "1" or an "X"; a blank, "N" or "0" means not enrolled.
+ */
+function isAffirmative(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (!v) return false;
+  return v === 'y' || v === 'yes' || v === '1' || v === 'x' || v === 'true';
+}
+
+/**
  * Rows -> candidate students.
  *
  * One row per student-subject is the norm in Kumon exports: "Aiden Chen, Math" and
@@ -84,12 +94,20 @@ export function groupRows(rows: string[][], mapping: ColumnMapping, headerRowInd
 
     let firstName = titleCase(cell(row, mapping.firstName));
     let lastName = titleCase(cell(row, mapping.lastName));
-    if (!firstName && !lastName) {
+    // A file may carry a surname column beside a combined "Student Name" and no given
+    // name of its own — the Kumon roster export does exactly this. Falling back only
+    // when BOTH are empty dropped every such row on the floor, so the fallback fires
+    // whenever the given name is missing; a surname already read stays authoritative.
+    if (!firstName) {
       const combined = cell(row, mapping.fullName);
-      if (!combined) continue;
-      const split = splitName(combined);
-      firstName = split.firstName;
-      lastName = split.lastName;
+      if (combined) {
+        const split = splitName(combined);
+        firstName = split.firstName;
+        // The dedicated surname column wins where there is one: the two disagree only
+        // through a typo in one of them ("Boomer" against "Gordon Bommer"), and the
+        // combined cell's tail is the less reliable of the two.
+        if (!lastName) lastName = split.lastName;
+      }
     } else if (!lastName && firstName.includes(',')) {
       const split = splitName(firstName);
       firstName = split.firstName;
@@ -100,19 +118,43 @@ export function groupRows(rows: string[][], mapping: ColumnMapping, headerRowInd
     const sourceId = cell(row, mapping.sourceId).trim() || null;
     const key = sourceId ? `id:${sourceId}` : `name:${fullNameKey(firstName, lastName)}`;
 
+    // Tall shape: one subject per row. Wide shape: a flag under each subject column.
     const subject = canonicalSubject(cell(row, mapping.subject));
+    const wideSubjects = (mapping.subjectColumns ?? [])
+      .filter((s) => isAffirmative(cell(row, s.column)))
+      .map((s) => s.subject);
     const minutesRaw = cell(row, mapping.expectedMinutes);
     const minutes = minutesRaw && !Number.isNaN(Number(minutesRaw)) ? Number(minutesRaw) : null;
-    const guardianName = cell(row, mapping.guardianName).trim() || null;
-    const guardianPhone = cell(row, mapping.guardianPhone)
-      ? normalizePhone(cell(row, mapping.guardianPhone))
-      : null;
+    // The primary guardian is the first block that actually carries a contact. A
+    // father's column set is often blank where the mother's is filled in, and taking
+    // the primary block on faith left those students with no guardian at all.
+    const guardianBlocks = [
+      { name: mapping.guardianName, phone: mapping.guardianPhone },
+      ...(mapping.extraGuardians ?? []),
+    ];
+    let guardianName: string | null = null;
+    let guardianPhone: string | null = null;
+    for (const block of guardianBlocks) {
+      const name = cell(row, block.name).trim() || null;
+      const rawPhone = cell(row, block.phone).trim();
+      const phone = rawPhone ? normalizePhone(rawPhone) || null : null;
+      // A phone is what the system actually needs to reach someone, so a block is
+      // only preferred once it has one; a name-only block is a fallback.
+      if (phone) {
+        guardianName = name ?? guardianName;
+        guardianPhone = phone;
+        break;
+      }
+      if (name && !guardianName) guardianName = name;
+    }
     const statusCell = cell(row, mapping.status);
     const releaseCell = cell(row, mapping.releaseMode);
 
+    const rowSubjects = subject ? [subject, ...wideSubjects] : wideSubjects;
+
     const existing = groups.get(key);
     if (existing) {
-      if (subject && !existing.subjects.includes(subject)) existing.subjects.push(subject);
+      for (const s of rowSubjects) if (!existing.subjects.includes(s)) existing.subjects.push(s);
       existing.rowNumbers.push(i + 1);
       if (minutes !== null) existing.expectedMinutes = Math.max(existing.expectedMinutes ?? 0, minutes);
       if (guardianName && !existing.guardianName) existing.guardianName = guardianName;
@@ -127,7 +169,7 @@ export function groupRows(rows: string[][], mapping: ColumnMapping, headerRowInd
       firstName,
       lastName,
       lastInitial: lastInitialOf(lastName) || firstName.slice(0, 1).toUpperCase(),
-      subjects: subject ? [subject] : [],
+      subjects: [...rowSubjects],
       expectedMinutes: minutes,
       status: statusCell ? normalizeStatus(statusCell) : 'active',
       releaseMode: releaseCell ? normalizeReleaseMode(releaseCell) : null,
@@ -348,7 +390,14 @@ export async function analyzeImport(
     ambiguous: items.filter((i) => i.action === 'ambiguous').length,
   };
 
-  const mappedColumns = new Set(Object.values(mapping));
+  const mappedColumns = new Set<number>(
+    Object.values(mapping).filter((v): v is number => typeof v === 'number'),
+  );
+  for (const s of mapping.subjectColumns ?? []) mappedColumns.add(s.column);
+  for (const g of mapping.extraGuardians ?? []) {
+    if (g.name !== undefined) mappedColumns.add(g.name);
+    if (g.phone !== undefined) mappedColumns.add(g.phone);
+  }
   const unmappedHeaders = headers.filter((h, i) => h !== '' && !mappedColumns.has(i));
 
   return { headerRowIndex, headers, mapping, unmappedHeaders, items, counts };

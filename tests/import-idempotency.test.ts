@@ -280,6 +280,87 @@ describe('roster import', () => {
     expect(resolved.created).toBe(1);
   });
 
+  /**
+   * The real Kumon centre export: a serial number, a surname column beside a full
+   * "Student Name", subjects as wide Y-flag columns, and a father's contact block
+   * followed by a mother's. Every column header here appears verbatim in the files
+   * the centres actually download.
+   */
+  const KUMON_WIDE = csv([
+    ['S. No.', 'Student Last ', 'Student Name', 'Math', 'Read', 'Class',
+      'Student Name', "Father's Name", 'Cell', 'e-mail', "Mother's Name", 'Cell', 'e-mail'],
+    ['1', 'Khandelwal', 'Samarth Khandelwal', 'Y', 'Y', 'M',
+      'Samarth Khandelwal', 'Manish Khandelwal', '860-989-7952', 'm@example.com',
+      'Sonam Khandelwal', '513-668-6850', 's@example.com'],
+    // Father's block is blank; only the mother can be reached.
+    ['2', 'Achampong', 'Ava Achampong', 'Y', '', 'EL',
+      'Ava Achampong', '', '', '', 'Adwoa Achampong', '571-282-5365', 'a@example.com'],
+    // Neither parent has a phone: a name-only block is still worth keeping.
+    ['3', 'Moss', 'Jude Moss', '', 'Y', 'M',
+      'Jude Moss', 'Peter Moss', '', '', '', '', ''],
+  ]);
+
+  it('reads the wide Kumon export: full name beside a surname column', async () => {
+    const centre = await makeCentre(db);
+    const plan = await analyzeImport(centre.id, KUMON_WIDE, asDb(db));
+
+    // "S. No." is the id; the SECOND "Student Name" must not become a first name.
+    expect(plan.mapping.sourceId).toBe(0);
+    expect(plan.mapping.fullName).toBe(2);
+    expect(plan.mapping.firstName).toBeUndefined();
+
+    expect(plan.items).toHaveLength(3);
+    // The surname is not doubled onto the given name.
+    expect(plan.items.map((i) => i.candidate.firstName)).toEqual(['Samarth', 'Ava', 'Jude']);
+    expect(plan.items.map((i) => i.candidate.lastInitial)).toEqual(['K', 'A', 'M']);
+  });
+
+  it('turns wide Y-flag subject columns into subjects', async () => {
+    const centre = await makeCentre(db);
+    const plan = await analyzeImport(centre.id, KUMON_WIDE, asDb(db));
+
+    expect(plan.mapping.subjectColumns).toEqual([
+      { column: 3, subject: 'Math' },
+      { column: 4, subject: 'Reading' },
+    ]);
+    expect(plan.items[0]!.candidate.subjects).toEqual(['Math', 'Reading']);
+    expect(plan.items[1]!.candidate.subjects).toEqual(['Math']);
+    // A blank flag is not enrolment, so this student is Reading only.
+    expect(plan.items[2]!.candidate.subjects).toEqual(['Reading']);
+  });
+
+  it('falls back to the second parent when the first has no contact', async () => {
+    const centre = await makeCentre(db);
+    const plan = await analyzeImport(centre.id, KUMON_WIDE, asDb(db));
+
+    const [first, second, third] = plan.items.map((i) => i.candidate);
+    expect(first!.guardianName).toBe('Manish Khandelwal');
+    expect(first!.guardianPhone).toBe('+18609897952');
+    // Father's block empty — the mother's is what reaches anyone.
+    expect(second!.guardianName).toBe('Adwoa Achampong');
+    expect(second!.guardianPhone).toBe('+15712825365');
+    // No phone anywhere: keep the name rather than dropping the guardian.
+    expect(third!.guardianName).toBe('Peter Moss');
+    expect(third!.guardianPhone).toBeNull();
+  });
+
+  it('re-imports the wide export with no further writes', async () => {
+    const centre = await makeCentre(db);
+    const first = await commitImport(
+      { centreId: centre.id, plan: await analyzeImport(centre.id, KUMON_WIDE, asDb(db)) },
+      asDb(db),
+    );
+    expect(first.created).toBe(3);
+
+    const before = await rosterFingerprint(db, centre.id);
+    const second = await commitImport(
+      { centreId: centre.id, plan: await analyzeImport(centre.id, KUMON_WIDE, asDb(db)) },
+      asDb(db),
+    );
+    expect(second).toMatchObject({ created: 0, updated: 0, unchanged: 3 });
+    expect(await rosterFingerprint(db, centre.id)).toEqual(before);
+  });
+
   it('never writes attendance events during an import', async () => {
     const centre = await makeCentre(db);
     await commitImport(
