@@ -15,9 +15,14 @@ export type ImportField = (typeof IMPORT_FIELDS)[number];
 
 const SYNONYMS: Record<ImportField, string[]> = {
   // 'student no' is deliberately absent: it scores 0.80 against "Student Name" on
-  // bigram similarity and would claim the name column as an id. 's no' and 'sr no'
-  // cover the serial-number headers that shape was there for.
-  sourceId: ['student id', 'studentid', 'id', 'student number', 'roll', 'roll number', 'enrollment id', 'member id', 's no', 'sr no', 'sl no'],
+  // bigram similarity and would claim the name column as an id.
+  //
+  // So are the serial-number headers ("S. No.", "Sr. No."). They look like ids but
+  // number the ROW, not the child: inserting one student shifts every serial below
+  // it, so the same number names a different child in the next export. Recording one
+  // as an import key silently rewrites one student's record with another's. Those
+  // files match on name instead, which is stable. See SERIAL_HEADERS below.
+  sourceId: ['student id', 'studentid', 'id', 'student number', 'roll', 'roll number', 'enrollment id', 'member id'],
   firstName: ['first name', 'first', 'given name', 'forename', 'fname', 'student first name', 'student first'],
   lastName: ['last name', 'last', 'surname', 'family name', 'lname', 'student last name', 'student last'],
   fullName: ['name', 'student name', 'student', 'full name', 'student full name', 'child name'],
@@ -92,6 +97,12 @@ export type ColumnMapping = Partial<Record<ImportField, number>> & {
   extraGuardians?: { name?: number; phone?: number }[];
 };
 
+/**
+ * Row-counter headers. A serial number is a position in the file, not an identity, so
+ * these columns are left unmapped entirely rather than mistaken for a student id.
+ */
+const SERIAL_HEADERS = new Set(['s no', 'sr no', 'sl no', 'sno', 'srno', 'serial', 'serial no', 'sl', 'index']);
+
 /** Headers that name a subject outright rather than describing one. */
 const SUBJECT_HEADERS: Record<string, string> = {
   math: 'Math',
@@ -111,6 +122,7 @@ export function matchColumns(headers: string[]): ColumnMapping {
   const candidates: { field: ImportField; column: number; score: number }[] = [];
 
   headers.forEach((header, column) => {
+    if (SERIAL_HEADERS.has(normalizeHeader(header))) return;
     for (const field of IMPORT_FIELDS) {
       const score = scoreHeader(header, field);
       if (score >= MATCH_THRESHOLD) candidates.push({ field, column, score });

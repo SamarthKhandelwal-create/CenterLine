@@ -304,8 +304,9 @@ describe('roster import', () => {
     const centre = await makeCentre(db);
     const plan = await analyzeImport(centre.id, KUMON_WIDE, asDb(db));
 
-    // "S. No." is the id; the SECOND "Student Name" must not become a first name.
-    expect(plan.mapping.sourceId).toBe(0);
+    // "S. No." numbers the row, not the child, so it is not an id at all.
+    expect(plan.mapping.sourceId).toBeUndefined();
+    // The SECOND "Student Name" must not become a first name.
     expect(plan.mapping.fullName).toBe(2);
     expect(plan.mapping.firstName).toBeUndefined();
 
@@ -327,6 +328,71 @@ describe('roster import', () => {
     expect(plan.items[1]!.candidate.subjects).toEqual(['Math']);
     // A blank flag is not enrolment, so this student is Reading only.
     expect(plan.items[2]!.candidate.subjects).toEqual(['Reading']);
+  });
+
+  it('does not treat a shifting serial number as a student identity', async () => {
+    const centre = await makeCentre(db);
+    const header = ['S. No.', 'Student Last ', 'Student Name', 'Math', 'Read', "Father's Name", 'Cell'];
+    const august = csv([
+      header,
+      ['1', 'Humphrey', 'Chole Humphrey', 'Y', '', 'Rob Humphrey', '513-555-0201'],
+      ['2', 'Livada', 'Luca Livada', 'Y', '', 'Ana Livada', '513-555-0202'],
+    ]);
+    // A student inserted above them pushes both serials down by one. Matching on the
+    // serial would rename Chole into Luca and merge two children into one record.
+    const september = csv([
+      header,
+      ['1', 'Miller', 'Makaylee Miller', 'Y', '', 'Kim Miller', '513-555-0203'],
+      ['2', 'Humphrey', 'Chole Humphrey', 'Y', '', 'Rob Humphrey', '513-555-0201'],
+      ['3', 'Livada', 'Luca Livada', 'Y', '', 'Ana Livada', '513-555-0202'],
+    ]);
+
+    await commitImport(
+      { centreId: centre.id, plan: await analyzeImport(centre.id, august, asDb(db)) },
+      asDb(db),
+    );
+    const second = await commitImport(
+      { centreId: centre.id, plan: await analyzeImport(centre.id, september, asDb(db)) },
+      asDb(db),
+    );
+
+    // Only the newcomer is created; the other two are recognised by name.
+    expect(second).toMatchObject({ created: 1, updated: 0, unchanged: 2 });
+
+    const names = await db.execute(sql`
+      SELECT first_name, last_initial FROM student
+      WHERE centre_id = ${centre.id} ORDER BY first_name`);
+    expect(names.rows).toEqual([
+      { first_name: 'Chole', last_initial: 'H' },
+      { first_name: 'Luca', last_initial: 'L' },
+      { first_name: 'Makaylee', last_initial: 'M' },
+    ]);
+
+    // No student ends up holding another child's identity.
+    const conflated = await db.execute(sql`
+      SELECT count(*)::int n FROM (
+        SELECT student_id FROM student_import_key
+        WHERE centre_id = ${centre.id} AND key_kind = 'full_name'
+        GROUP BY student_id HAVING count(*) > 1
+      ) t`);
+    expect((conflated.rows[0] as { n: number }).n).toBe(0);
+  });
+
+  it('reads U as enrolled and N, D or blank as not', async () => {
+    const centre = await makeCentre(db);
+    const flags = csv([
+      ['S. No.', 'Student Last ', 'Student Name', 'Math', 'Read', "Father's Name", 'Cell'],
+      // "U" is enrolment with worksheets on hold, not an absence of enrolment.
+      ['1', 'Gueddari', 'Ali Gueddari', 'U', 'U', 'Sami Gueddari', '513-555-0111'],
+      ['2', 'Moss', 'Jude Moss', 'U', 'N', 'Peter Moss', '513-555-0112'],
+      ['3', 'Shiffert', 'Destiny Shiffert', 'y', 'D', 'Dana Shiffert', '513-555-0113'],
+    ]);
+    const plan = await analyzeImport(centre.id, flags, asDb(db));
+
+    expect(plan.items[0]!.candidate.subjects).toEqual(['Math', 'Reading']);
+    expect(plan.items[1]!.candidate.subjects).toEqual(['Math']);
+    // Lowercase "y" counts; "D" does not.
+    expect(plan.items[2]!.candidate.subjects).toEqual(['Math']);
   });
 
   it('falls back to the second parent when the first has no contact', async () => {

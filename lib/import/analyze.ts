@@ -69,12 +69,13 @@ function cell(row: string[], index: number | undefined): string {
 
 /**
  * Whether a wide subject column is ticked for this row. Exports mark enrolment with
- * "Y", "Yes", "1" or an "X"; a blank, "N" or "0" means not enrolled.
+ * "Y", "Yes", "1" or an "X", and "U" — a student enrolled in the subject whose
+ * worksheets are on hold. A blank, "N", "D" or "0" means not enrolled.
  */
 function isAffirmative(value: string): boolean {
   const v = value.trim().toLowerCase();
   if (!v) return false;
-  return v === 'y' || v === 'yes' || v === '1' || v === 'x' || v === 'true';
+  return v === 'y' || v === 'yes' || v === '1' || v === 'x' || v === 'true' || v === 'u';
 }
 
 /**
