@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 const INSTRUCTOR_NAV = [
   { href: '/floor', label: 'Floor' },
   { href: '/students', label: 'Students' },
+  { href: '/schedule', label: 'Schedule' },
   { href: '/day', label: 'Day' },
   { href: '/history', label: 'History' },
   { href: '/staff', label: 'Staff' },

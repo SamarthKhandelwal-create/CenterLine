@@ -1,3 +1,5 @@
+import { parseWeekday } from '@/lib/schedule/weekday';
+
 export const IMPORT_FIELDS = [
   'sourceId',
   'firstName',
@@ -91,7 +93,15 @@ export const MATCH_THRESHOLD = 0.72;
  */
 export type SubjectColumn = { column: number; subject: string };
 
+/**
+ * A class day in the file. These rosters repeat the weekday headers twice: the first
+ * block flags whether the student attends that day ("1"), the second gives their
+ * arrival time ("5:00 PM"). `flagColumn` is the first, `timeColumn` the second.
+ */
+export type DayColumn = { weekday: number; flagColumn: number; timeColumn?: number };
+
 export type ColumnMapping = Partial<Record<ImportField, number>> & {
+  dayColumns?: DayColumn[];
   subjectColumns?: SubjectColumn[];
   /** Guardian name/phone pairs beyond the first, e.g. a mother's column set. */
   extraGuardians?: { name?: number; phone?: number }[];
@@ -171,6 +181,34 @@ export function matchColumns(headers: string[]): ColumnMapping {
       mapping.subjectColumns = subjectColumns;
       for (const s of subjectColumns) usedColumns.add(s.column);
     }
+  }
+
+  // Class days. These rosters list the weekday headers twice over: "Mon Thu Sat Mon
+  // Thu Sat", the first block flagging attendance and the second giving the arrival
+  // time. Occurrences are collected per weekday in column order, so the first is the
+  // flag and a second, if present, is the time.
+  const dayOccurrences = new Map<number, number[]>();
+  headers.forEach((header, column) => {
+    if (usedColumns.has(column)) return;
+    const weekday = parseWeekday(header);
+    if (weekday === null) return;
+    const list = dayOccurrences.get(weekday) ?? [];
+    list.push(column);
+    dayOccurrences.set(weekday, list);
+  });
+
+  if (dayOccurrences.size > 0) {
+    const dayColumns: DayColumn[] = [];
+    for (const [weekday, columns] of dayOccurrences) {
+      dayColumns.push({
+        weekday,
+        flagColumn: columns[0]!,
+        timeColumn: columns[1],
+      });
+      for (const c of columns) usedColumns.add(c);
+    }
+    dayColumns.sort((a, b) => a.flagColumn - b.flagColumn);
+    mapping.dayColumns = dayColumns;
   }
 
   // Further guardian blocks: a second "Cell" after the primary pair is the mother's

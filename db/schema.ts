@@ -9,6 +9,7 @@ import {
   primaryKey,
   index,
   uniqueIndex,
+  check,
   pgEnum,
 } from 'drizzle-orm/pg-core';
 import { relations, sql } from 'drizzle-orm';
@@ -223,6 +224,51 @@ export const staffShift = pgTable(
   ],
 );
 
+/**
+ * Which days a student is expected, and at what time.
+ *
+ * One row per student per weekday, because that is the unit staff actually change:
+ * "move Ava from Thursday to Monday" is one delete and one insert, not an edit of an
+ * array. The unique index makes a student-weekday pair exist at most once, so a
+ * double-submit cannot schedule the same child twice on one day.
+ *
+ * `startsAt` is nullable on purpose. The centre rosters carry days with no arrival
+ * time against them — the child comes on Monday, whenever they come. Such a row is a
+ * real expectation and is counted as one; it simply cannot be late. Forcing a time
+ * here would have meant inventing one.
+ *
+ * `weekday` is 0=Sunday..6=Saturday, matching both JS getUTCDay() and Postgres
+ * EXTRACT(DOW), so the same number means the same day on either side of the wire.
+ */
+export const studentSchedule = pgTable(
+  'student_schedule',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    centreId: uuid('centre_id')
+      .notNull()
+      .references(() => centre.id, { onDelete: 'cascade' }),
+    studentId: uuid('student_id')
+      .notNull()
+      .references(() => student.id, { onDelete: 'cascade' }),
+    weekday: integer('weekday').notNull(),
+    /** Centre-local wall clock. Null means expected that day at no fixed time. */
+    startsAt: time('starts_at'),
+    /**
+     * "Flex/Monthly" and anything else the file said instead of a time. Kept so the
+     * review screen can show what the roster actually claimed rather than a blank.
+     */
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('student_schedule_one_per_day').on(t.studentId, t.weekday),
+    index('student_schedule_centre_weekday_idx').on(t.centreId, t.weekday),
+    // A weekday outside 0-6 is not a day. Rejected by the database rather than by
+    // whichever caller remembers to validate.
+    check('student_schedule_weekday_range', sql`${t.weekday} BETWEEN 0 AND 6`),
+  ],
+);
+
 export const messageLog = pgTable(
   'message_log',
   {
@@ -315,6 +361,7 @@ export type Credential = typeof credential.$inferSelect;
 export type AttendanceEvent = typeof attendanceEvent.$inferSelect;
 export type MessageLog = typeof messageLog.$inferSelect;
 export type StaffShift = typeof staffShift.$inferSelect;
+export type StudentSchedule = typeof studentSchedule.$inferSelect;
 export type ComplianceAttestation = typeof complianceAttestation.$inferSelect;
 export type PasswordResetToken = typeof passwordResetToken.$inferSelect;
 export type EventType = (typeof eventType.enumValues)[number];

@@ -6,8 +6,10 @@ import {
   student as studentT,
   studentGuardian,
   studentImportKey,
+  studentSchedule,
 } from '@/db/schema';
 import { expectedMinutesFor } from '@/lib/students/expected-minutes';
+import { formatScheduleTime, parseScheduleTime, weekdayShortName } from '@/lib/schedule/weekday';
 import { detectHeaderRow, parseSpreadsheet } from './parse';
 import { matchColumns, type ColumnMapping } from './match-columns';
 import {
@@ -32,6 +34,12 @@ export type CandidateStudent = {
   releaseMode: 'guardian_pickup' | 'self_release' | null;
   guardianName: string | null;
   guardianPhone: string | null;
+  /**
+   * The days this student attends. Null when the file carried no day columns at all,
+   * which is what tells the commit to leave an existing schedule alone rather than
+   * read "no days" as "clear their week".
+   */
+  schedule: { weekday: number; startsAt: string | null; note: string | null }[] | null;
   rowNumbers: number[];
 };
 
@@ -153,9 +161,42 @@ export function groupRows(rows: string[][], mapping: ColumnMapping, headerRowInd
 
     const rowSubjects = subject ? [subject, ...wideSubjects] : wideSubjects;
 
+    // Class days. A day counts when its flag is ticked, and also when it carries an
+    // arrival time but no flag — "Flex/Monthly" sits in the time column with nothing
+    // beside it, and dropping it would lose the only thing the file said about that
+    // child's week.
+    const rowSchedule = mapping.dayColumns
+      ? mapping.dayColumns.flatMap((day) => {
+          const flag = cell(row, day.flagColumn).trim();
+          const timeText = cell(row, day.timeColumn).trim();
+          if (!isAffirmative(flag) && !timeText) return [];
+          const startsAt = timeText ? parseScheduleTime(timeText) : null;
+          return [{
+            weekday: day.weekday,
+            startsAt,
+            // Text that is not a clock time is kept verbatim for the review screen.
+            note: timeText && startsAt === null ? timeText : null,
+          }];
+        })
+      : null;
+
     const existing = groups.get(key);
     if (existing) {
       for (const s of rowSubjects) if (!existing.subjects.includes(s)) existing.subjects.push(s);
+      // Several rows for one student (one per subject) repeat the same week; merge by
+      // weekday so the days union rather than duplicate.
+      if (rowSchedule) {
+        const merged = existing.schedule ?? [];
+        for (const slot of rowSchedule) {
+          const already = merged.find((m) => m.weekday === slot.weekday);
+          if (!already) merged.push(slot);
+          else if (already.startsAt === null && slot.startsAt !== null) {
+            already.startsAt = slot.startsAt;
+            already.note = slot.note;
+          }
+        }
+        existing.schedule = merged;
+      }
       existing.rowNumbers.push(i + 1);
       if (minutes !== null) existing.expectedMinutes = Math.max(existing.expectedMinutes ?? 0, minutes);
       if (guardianName && !existing.guardianName) existing.guardianName = guardianName;
@@ -176,15 +217,43 @@ export function groupRows(rows: string[][], mapping: ColumnMapping, headerRowInd
       releaseMode: releaseCell ? normalizeReleaseMode(releaseCell) : null,
       guardianName,
       guardianPhone,
+      schedule: rowSchedule,
       rowNumbers: [i + 1],
     });
   }
 
   // Sorting subjects is what makes the diff stable — otherwise the order rows happen
   // to appear in the file would flip the array and every re-import would read "updated".
-  for (const candidate of groups.values()) candidate.subjects.sort();
+  for (const candidate of groups.values()) {
+    candidate.subjects.sort();
+    // Same reason as subjects: a stable order is what stops a re-import reading as a
+    // change because the file happened to list the days differently.
+    candidate.schedule?.sort((a, b) => a.weekday - b.weekday);
+  }
 
   return { candidates: [...groups.values()], warnings };
+}
+
+type ScheduleSlotish = { weekday: number; startsAt: string | null };
+
+/** "Mon 5:00 PM, Thu" — the week in one line, for the review screen. */
+function describeSchedule(slots: ScheduleSlotish[]): string {
+  if (slots.length === 0) return '—';
+  return [...slots]
+    .sort((a, b) => a.weekday - b.weekday)
+    .map((s) => {
+      const time = formatScheduleTime(s.startsAt);
+      return time ? `${weekdayShortName(s.weekday)} ${time}` : weekdayShortName(s.weekday);
+    })
+    .join(', ');
+}
+
+function schedulesEqual(a: ScheduleSlotish[], b: ScheduleSlotish[]): boolean {
+  if (a.length !== b.length) return false;
+  const key = (s: ScheduleSlotish) => `${s.weekday}|${s.startsAt ?? ''}`;
+  const x = a.map(key).sort();
+  const y = b.map(key).sort();
+  return x.every((v, i) => v === y[i]);
 }
 
 function subjectsEqual(a: string[], b: string[]): boolean {
@@ -283,6 +352,29 @@ export async function analyzeImport(
       : [];
   const guardianByStudent = new Map(guardianRows.map((g) => [g.studentId, g]));
 
+  const scheduleRows =
+    existingStudents.length > 0
+      ? await db
+          .select({
+            studentId: studentSchedule.studentId,
+            weekday: studentSchedule.weekday,
+            startsAt: studentSchedule.startsAt,
+          })
+          .from(studentSchedule)
+          .where(
+            inArray(
+              studentSchedule.studentId,
+              existingStudents.map((s) => s.id),
+            ),
+          )
+      : [];
+  const scheduleByStudent = new Map<string, { weekday: number; startsAt: string | null }[]>();
+  for (const row of scheduleRows) {
+    const list = scheduleByStudent.get(row.studentId) ?? [];
+    list.push({ weekday: row.weekday, startsAt: row.startsAt ?? null });
+    scheduleByStudent.set(row.studentId, list);
+  }
+
   const items: ImportItem[] = candidates.map((candidate) => {
     const warnings: string[] = [];
     let matchedId: string | null = null;
@@ -373,6 +465,18 @@ export async function analyzeImport(
     if (candidate.guardianPhone && normalizePhone(guardian?.phone ?? '') !== candidate.guardianPhone) {
       changes.push({ field: 'Guardian phone', from: guardian?.phone ?? '—', to: candidate.guardianPhone });
     }
+    // A file with no day columns says nothing about the week, which is different from
+    // saying the week is empty: only a file that HAS them can change a schedule.
+    if (candidate.schedule) {
+      const current = scheduleByStudent.get(matchedId) ?? [];
+      if (!schedulesEqual(current, candidate.schedule)) {
+        changes.push({
+          field: 'Schedule',
+          from: describeSchedule(current),
+          to: describeSchedule(candidate.schedule),
+        });
+      }
+    }
 
     return {
       action: changes.length > 0 ? 'updated' : 'unchanged',
@@ -395,6 +499,10 @@ export async function analyzeImport(
     Object.values(mapping).filter((v): v is number => typeof v === 'number'),
   );
   for (const s of mapping.subjectColumns ?? []) mappedColumns.add(s.column);
+  for (const d of mapping.dayColumns ?? []) {
+    mappedColumns.add(d.flagColumn);
+    if (d.timeColumn !== undefined) mappedColumns.add(d.timeColumn);
+  }
   for (const g of mapping.extraGuardians ?? []) {
     if (g.name !== undefined) mappedColumns.add(g.name);
     if (g.phone !== undefined) mappedColumns.add(g.phone);

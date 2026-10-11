@@ -7,6 +7,7 @@ import {
   student as studentT,
   studentGuardian,
   studentImportKey,
+  studentSchedule,
 } from '@/db/schema';
 import { generateToken, hashToken } from '@/lib/credentials/token';
 import { expectedMinutesFor } from '@/lib/students/expected-minutes';
@@ -106,6 +107,7 @@ export async function commitImport(
         });
 
         await upsertGuardian(tx, args.centreId, studentId, item);
+        await writeSchedule(tx, args.centreId, item, studentId);
         await writeKeys(tx, args.centreId, item, studentId);
         result.created += 1;
         continue;
@@ -140,6 +142,7 @@ export async function commitImport(
           .where(and(eq(studentT.id, matchedId), eq(studentT.centreId, args.centreId)));
 
         await upsertGuardian(tx, args.centreId, matchedId, item);
+        await writeSchedule(tx, args.centreId, item, matchedId);
         await writeKeys(tx, args.centreId, item, matchedId);
         result.updated += 1;
       }
@@ -147,6 +150,37 @@ export async function commitImport(
   });
 
   return result;
+}
+
+/**
+ * Writes the week the file described, replacing whatever was there.
+ *
+ * A null schedule means the file had no day columns at all, so it says nothing about
+ * this student's week and the stored one is left alone. An empty array is different:
+ * the file had the columns and ticked none of them, which is a student who has come
+ * off the timetable, and their rows go.
+ */
+async function writeSchedule(
+  tx: Db,
+  centreId: string,
+  item: ImportItem,
+  studentId: string,
+) {
+  const slots = item.candidate.schedule;
+  if (slots === null) return;
+
+  await tx.delete(studentSchedule).where(eq(studentSchedule.studentId, studentId));
+  if (slots.length === 0) return;
+
+  await tx.insert(studentSchedule).values(
+    slots.map((slot) => ({
+      centreId,
+      studentId,
+      weekday: slot.weekday,
+      startsAt: slot.startsAt,
+      note: slot.note,
+    })),
+  );
 }
 
 /** Records the identity keys so the next import of this file matches exactly. */
