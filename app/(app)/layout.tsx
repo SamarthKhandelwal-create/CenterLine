@@ -9,7 +9,9 @@ const INSTRUCTOR_NAV = [
   { href: '/day', label: 'Day' },
   { href: '/history', label: 'History' },
   { href: '/staff', label: 'Staff' },
-  { href: '/compliance', label: 'Compliance' },
+  // Compliance is deliberately absent. The screen, the evidence pack and the recorded
+  // attestations are all still there and still work — see ENABLE_COMPLIANCE in
+  // middleware.ts — it is just not offered in the navigation.
 ] as const;
 
 const ASSISTANT_NAV = [{ href: '/floor', label: 'Floor' }] as const;

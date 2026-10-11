@@ -22,6 +22,16 @@ export async function enrollKioskAction(formData: FormData) {
   const parsed = schema.safeParse({ label: formData.get('label') || 'Front door' });
   const label = parsed.success ? parsed.data.label : 'Front door';
 
+  // The centre the confirmation screen named, echoed back. If the session changed
+  // between render and submit — someone signed into another account in a second tab,
+  // which shares the cookie jar — this no longer matches and we re-render rather than
+  // bind the tablet to a centre nobody chose. Never trusted as an authorisation input:
+  // the token is still minted from the session's own centre, only after they agree.
+  const shown = formData.get('centreId');
+  if (typeof shown === 'string' && shown && shown !== centre.id) {
+    redirect('/kiosk/enroll?switched=1');
+  }
+
   const token = await createKioskToken(centre.id, label, env.KIOSK_SECRET, user.role);
   const jar = await cookies();
   jar.set(KIOSK_COOKIE, token, {

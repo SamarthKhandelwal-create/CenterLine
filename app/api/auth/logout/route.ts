@@ -13,5 +13,14 @@ export async function POST(request: Request) {
   }
   const jar = await cookies();
   jar.delete(SESSION_COOKIE);
-  return NextResponse.redirect(new URL('/login', request.url), 303);
+
+  // Signing out of a borrowed door tablet should land back on its kiosk, not on a
+  // login screen nobody at the door can use. Same-origin paths only, so the form
+  // cannot be used to bounce someone off site.
+  const form = await request.formData().catch(() => null);
+  const next = form?.get('next');
+  const target =
+    typeof next === 'string' && next.startsWith('/') && !next.startsWith('//') ? next : '/login';
+
+  return NextResponse.redirect(new URL(target, request.url), 303);
 }
