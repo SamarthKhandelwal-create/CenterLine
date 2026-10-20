@@ -34,6 +34,16 @@ export type KioskResult =
       lastInitial: string;
     }
   | {
+      /**
+       * The kiosk refused to check them back in: most of today's allowance is spent.
+       * Nothing was recorded. An instructor can still check them in from /floor, which
+       * is why this screen sends them to the desk and "Not yet" does not.
+       */
+      kind: 'timeUsed';
+      firstName: string;
+      lastInitial: string;
+    }
+  | {
       kind: 'staff';
       action: 'clock_in' | 'clock_out';
       name: string;
@@ -94,6 +104,8 @@ type ApiResponse = {
   repeated?: boolean;
   /** Not ok, but not a failure either — see KioskResult['kind'] === 'tooEarly'. */
   tooEarly?: boolean;
+  /** Likewise — see KioskResult['kind'] === 'timeUsed'. */
+  timeUsed?: boolean;
 };
 
 export function KioskShell({
@@ -143,6 +155,18 @@ export function KioskShell({
           type: 'result',
           result: {
             kind: 'tooEarly',
+            firstName: data.firstName,
+            lastInitial: data.lastInitial ?? '',
+          },
+        });
+        return true;
+      }
+
+      if (data && !data.ok && data.timeUsed && data.firstName) {
+        dispatch({
+          type: 'result',
+          result: {
+            kind: 'timeUsed',
             firstName: data.firstName,
             lastInitial: data.lastInitial ?? '',
           },
@@ -220,7 +244,8 @@ export function KioskShell({
   // Result auto-dismiss.
   useEffect(() => {
     if (state.screen !== 'result') return;
-    const ms = state.result.kind === 'tooEarly' ? BLOCKED_RESULT_MS : RESULT_MS;
+    const blocked = state.result.kind === 'tooEarly' || state.result.kind === 'timeUsed';
+    const ms = blocked ? BLOCKED_RESULT_MS : RESULT_MS;
     const id = setTimeout(() => dispatch({ type: 'idle' }), ms);
     return () => clearTimeout(id);
   }, [state.screen, state]);

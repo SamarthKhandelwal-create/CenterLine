@@ -191,6 +191,66 @@ export async function unconfirmedInferredSessions(
   return (rows.rows as Record<string, unknown>[]).map(mapSession);
 }
 
+/**
+ * Minutes a student has already spent inside today, summed across every CLOSED session
+ * on the centre-local day.
+ *
+ * Open sessions are excluded on purpose. This figure exists to decide whether a student
+ * may check in again, which is a question only ever asked when they are currently out —
+ * and counting a session that has not ended would mean counting minutes that are still
+ * being spent.
+ *
+ * Inferred check-outs count like any other. The estimate is the centre's best record of
+ * when the child left, and declining to count it would let an unreviewed day quietly
+ * reopen the door.
+ */
+export async function minutesUsedToday(
+  studentId: string,
+  timezone: string,
+  at: Date = new Date(),
+  db: Db = defaultDb,
+): Promise<number> {
+  const rows = await db.execute(sql`
+    SELECT COALESCE(SUM(v.duration_minutes), 0)::int AS used
+    FROM session_v v
+    WHERE v.student_id = ${studentId}
+      AND v.is_open = false
+      AND v.session_date
+        = (${at.toISOString()}::timestamptz AT TIME ZONE ${timezone})::date
+  `);
+  return Number((rows.rows[0] as { used: number }).used);
+}
+
+/**
+ * The same figure as `minutesUsedToday`, for every student at a centre who has closed at
+ * least one session today. One query for a whole board rather than one per student.
+ *
+ * Students absent all day are simply missing from the map; callers read a miss as zero,
+ * which is what it means.
+ */
+export async function minutesUsedTodayByStudent(
+  centreId: string,
+  timezone: string,
+  at: Date = new Date(),
+  db: Db = defaultDb,
+): Promise<Map<string, number>> {
+  const rows = await db.execute(sql`
+    SELECT v.student_id, COALESCE(SUM(v.duration_minutes), 0)::int AS used
+    FROM session_v v
+    WHERE v.centre_id = ${centreId}
+      AND v.is_open = false
+      AND v.session_date
+        = (${at.toISOString()}::timestamptz AT TIME ZONE ${timezone})::date
+    GROUP BY v.student_id
+  `);
+  return new Map(
+    (rows.rows as { student_id: string; used: number }[]).map((r) => [
+      r.student_id,
+      Number(r.used),
+    ]),
+  );
+}
+
 /** Active students with no live event at all on the local day. */
 export async function absentStudents(
   centreId: string,

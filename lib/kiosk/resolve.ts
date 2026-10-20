@@ -4,7 +4,8 @@ import { db as defaultDb, type Db } from '@/db';
 import { credential as credentialT, student as studentT } from '@/db/schema';
 import { DOUBLE_SCAN_GRACE_MS, toggleAttendance } from '@/lib/attendance/commands';
 import { isEarlyDeparture } from '@/lib/attendance/early-departure';
-import { lastEventOnLocalDay } from '@/lib/attendance/queries';
+import { isReEntryBlocked } from '@/lib/attendance/time-used';
+import { lastEventOnLocalDay, minutesUsedToday } from '@/lib/attendance/queries';
 import { hashToken } from '@/lib/credentials/token';
 import { sendPickupReady } from '@/lib/sms/send';
 import type { CaptureMethod, Centre } from '@/db/schema';
@@ -32,6 +33,18 @@ export type KioskOutcome =
        */
       ok: false;
       tooEarly: true;
+      firstName: string;
+      lastInitial: string;
+    }
+  | {
+      /**
+       * Most of today's allowance is already spent, so the kiosk will not start another
+       * session. Nothing was written. Unlike `tooEarly` this one DOES send the child to
+       * the desk, because an instructor can override it from /floor — so the screen has
+       * somewhere useful to point them.
+       */
+      ok: false;
+      timeUsed: true;
       firstName: string;
       lastInitial: string;
     }
@@ -66,6 +79,15 @@ async function applyToggle(
     return {
       ok: false,
       tooEarly: true,
+      firstName: args.firstName,
+      lastInitial: args.lastInitial,
+    };
+  }
+
+  if (await isReEntryRefused({ ...args, at }, db)) {
+    return {
+      ok: false,
+      timeUsed: true,
       firstName: args.firstName,
       lastInitial: args.lastInitial,
     };
@@ -131,6 +153,36 @@ async function isTooEarlyToLeave(
   if (elapsedMs < DOUBLE_SCAN_GRACE_MS) return false;
 
   return isEarlyDeparture(Math.round(elapsedMs / 60_000), args.expectedMinutes);
+}
+
+/**
+ * Would this scan start a new session for a student who has already used most of today?
+ *
+ * Read before the toggle for the same reason as `isTooEarlyToLeave`: a refusal must write
+ * nothing, because the attendance log is evidence and a check-in that was refused did not
+ * happen.
+ *
+ * Only ever blocks a check-IN — the mirror image of early-departure, which only ever
+ * blocks a check-out. A student who is currently inside must always be able to leave, no
+ * matter how much of the day they have spent; locking the door from the inside over a
+ * time budget would be absurd, and on a fire drill, dangerous.
+ *
+ * A tap inside the double-scan grace window is left to the toggle, which replays the
+ * previous result rather than refusing: a child who has just checked out and taps again
+ * is told "Checked out", which is true and more useful than sending them to the desk.
+ */
+async function isReEntryRefused(
+  args: { centre: Centre; studentId: string; expectedMinutes: number; at: Date },
+  db: Db,
+): Promise<boolean> {
+  const last = await lastEventOnLocalDay(args.studentId, args.centre.timezone, args.at, db);
+  // No event today means this is the first arrival, which nothing blocks. An open
+  // session means this tap is a check-out, which nothing blocks either.
+  if (!last || last.type === 'check_in') return false;
+  if (args.at.getTime() - last.occurredAt.getTime() < DOUBLE_SCAN_GRACE_MS) return false;
+
+  const used = await minutesUsedToday(args.studentId, args.centre.timezone, args.at, db);
+  return isReEntryBlocked(used, args.expectedMinutes);
 }
 
 /** Resolves a scanned QR token to a student, then toggles. */

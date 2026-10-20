@@ -54,6 +54,29 @@ export function ResultState({
     );
   }
 
+  // The kiosk would not start another session: most of today's allowance is spent.
+  // Nothing was recorded.
+  //
+  // Violet like "Not yet", because both are refusals rather than faults — the amber screen
+  // means something is wrong, and nothing here is. The wording is the difference: this one
+  // sends the child to the desk, because an instructor CAN let them in from /floor, and a
+  // refusal with a way forward should name it.
+  if (result.kind === 'timeUsed') {
+    return (
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="flex min-h-screen w-full flex-col items-center justify-center gap-6 bg-violet-700 p-8 text-center text-white"
+      >
+        <p className="text-8xl font-bold">All done today</p>
+        <p className="text-6xl font-semibold">
+          {result.firstName} {result.lastInitial}.
+        </p>
+        <p className="text-4xl">Ask your instructor if you need to come back in.</p>
+      </button>
+    );
+  }
+
   // Staff shifts reuse the same two colours: green for arriving, blue for leaving. What
   // changes is the wording — a shift is clocked, not checked, and the person is named in
   // full because they are staff rather than a child at the door.

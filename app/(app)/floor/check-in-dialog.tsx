@@ -4,9 +4,19 @@ import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { formatDuration } from '@/lib/time/centre-time';
+import { cn } from '@/lib/utils';
 import { staffCheckInAction } from './actions';
 
-export type NotPresentStudent = { id: string; firstName: string; lastInitial: string };
+export type NotPresentStudent = {
+  id: string;
+  firstName: string;
+  lastInitial: string;
+  usedMinutes: number;
+  expectedMinutes: number;
+  /** The kiosk is refusing to check this student back in; the desk can still do it. */
+  kioskBlocked: boolean;
+};
 
 /**
  * Front-desk check-in. The kiosk handles the normal case; this is for the child who
@@ -94,12 +104,28 @@ export function CheckInDialog({
                 type="button"
                 disabled={pending}
                 onClick={() => checkIn(s)}
-                className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-accent disabled:opacity-50"
+                className={cn(
+                  'flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left hover:bg-accent disabled:opacity-50',
+                  s.kioskBlocked && 'border-violet-300 bg-violet-50',
+                )}
               >
-                <span className="font-medium">
-                  {s.firstName} {s.lastInitial}.
+                <span className="min-w-0">
+                  <span className="font-medium">
+                    {s.firstName} {s.lastInitial}.
+                  </span>
+                  {/* Why the kiosk turned them away, in the place where staff are about
+                      to overrule it. Stated as the two numbers rather than "blocked", so
+                      the instructor judges the case instead of the label. */}
+                  {s.kioskBlocked ? (
+                    <span className="block text-xs text-violet-800">
+                      Used {formatDuration(s.usedMinutes)} of{' '}
+                      {formatDuration(s.expectedMinutes)} today · kiosk will not re-admit
+                    </span>
+                  ) : null}
                 </span>
-                <span className="text-sm text-muted-foreground">Check in</span>
+                <span className="shrink-0 text-sm text-muted-foreground">
+                  {s.kioskBlocked ? 'Check in anyway' : 'Check in'}
+                </span>
               </button>
             </li>
           ))}
