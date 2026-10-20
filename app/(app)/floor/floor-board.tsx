@@ -186,11 +186,30 @@ function FloorInner({
       ) : null}
 
       <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {present.length} {present.length === 1 ? 'student' : 'students'} present
-          </h1>
-          <p className="text-sm text-muted-foreground">{centreName}</p>
+        <div className="flex items-center gap-4">
+          {/* The headcount, sized to be read from across the room rather than from the
+              chair — "how many children are in the room right now" is the one number a
+              fire marshal asks for, and it should not need squinting at. It counts the
+              same `present` array the grid renders, so the two can never disagree, and
+              it re-renders on the same 10-second refresh. */}
+          <div
+            className="flex min-w-[5.5rem] flex-col items-center rounded-xl border-2 border-slate-900 bg-white px-4 py-2"
+            role="status"
+            aria-label={`${present.length} students in the centre right now`}
+          >
+            <span className="text-5xl font-bold leading-none tabular-nums">{present.length}</span>
+            <span className="mt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              in class
+            </span>
+          </div>
+          <div>
+            {/* The count lives in the tile, so the heading names the place instead of
+                repeating the number back at a different size. */}
+            <h1 className="text-2xl font-semibold tracking-tight">{centreName}</h1>
+            <p className="text-sm text-muted-foreground">
+              {present.length === 1 ? 'student' : 'students'} checked in right now
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <Input

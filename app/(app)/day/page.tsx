@@ -10,9 +10,12 @@ import {
   formatLocalTime,
   localDateString,
 } from '@/lib/time/centre-time';
+import Link from 'next/link';
+import { expectedToday } from '@/lib/schedule/queries';
+import { formatScheduleTime } from '@/lib/schedule/weekday';
 import { EstimatedBadge } from '@/components/estimated-badge';
 import { Badge } from '@/components/ui/badge';
-import { ConfirmButton, CheckOutNowButton } from './day-actions';
+import { ConfirmAllButton, ConfirmButton, CheckOutNowButton } from './day-actions';
 import type { SessionRow } from '@/lib/attendance/queries';
 
 export const dynamic = 'force-dynamic';
@@ -22,18 +25,28 @@ export default async function DayPage() {
   const at = new Date();
   const today = localDateString(at, centre.timezone);
 
-  const [inferred, absent, present] = await Promise.all([
+  const [inferred, absent, present, expected] = await Promise.all([
     unconfirmedInferredSessions(centre.id, centre.timezone, at),
     absentStudents(centre.id, centre.timezone, at),
     presentStudents(centre.id, centre.timezone, at),
+    expectedToday(centre.id, centre.timezone, at),
   ]);
+
+  // Scheduled for today and not yet seen. `expected` being empty means this centre
+  // has no schedules for today at all, which the fallback section below handles.
+  const missing = expected.filter((s) => !s.arrived);
 
   // Today's estimates are the close-out task. Anything older is a backlog that still
   // has to be clearable — an unreviewed estimate keeps requirement 3 in breach.
   const todaysEstimates = inferred.filter((s) => s.sessionDate === today);
   const backlog = inferred.filter((s) => s.sessionDate !== today);
 
-  const nothingToDo = inferred.length === 0 && present.length === 0;
+  // A student who never arrived is not "done for the day". Whichever list is on
+  // screen — the scheduled one, or the fallback for a centre with no schedules yet —
+  // the banner must not sit above a list of children nobody has accounted for and
+  // claim everything is closed out.
+  const unaccountedFor = expected.length > 0 ? missing.length : absent.length;
+  const nothingToDo = inferred.length === 0 && present.length === 0 && unaccountedFor === 0;
 
   return (
     <div className="space-y-6">
@@ -49,6 +62,7 @@ export default async function DayPage() {
         <EstimateSection
           title={`Estimated check-outs to confirm (${todaysEstimates.length})`}
           blurb="Nobody saw these students leave. The system closed the session at closing time. Confirming records that you checked — it does not change the time."
+          confirmAllLabel="every estimate from today"
           sessions={todaysEstimates}
           timezone={centre.timezone}
         />
@@ -58,6 +72,7 @@ export default async function DayPage() {
         <EstimateSection
           title={`Earlier estimates still unconfirmed (${backlog.length})`}
           blurb="These are from previous days. Until they are reviewed they stay marked as estimates, and the compliance check for “actual arrival and departure” stays amber."
+          confirmAllLabel="every earlier estimate"
           sessions={backlog}
           timezone={centre.timezone}
           showDate
@@ -94,9 +109,37 @@ export default async function DayPage() {
         </section>
       ) : null}
 
-      {absent.length > 0 ? (
+      {missing.length > 0 ? (
         <section className="space-y-2 rounded-lg border p-4">
-          <h2 className="font-semibold">Expected but not seen today ({absent.length})</h2>
+          <h2 className="font-semibold">Expected but not seen today ({missing.length})</h2>
+          {/* Scheduled for today and not here. Before the schedule existed this listed
+              every active student who had not come in, which on a Monday meant the
+              Tuesday and Thursday children too — a list so long it said nothing. */}
+          <div className="flex flex-wrap gap-2">
+            {missing.map((s) => (
+              <Badge key={s.studentId} variant="secondary" className="px-2 py-1 text-sm">
+                {s.firstName} {s.lastInitial}.
+                {formatScheduleTime(s.startsAt) ? (
+                  <span className="ml-1 font-normal opacity-70">
+                    {formatScheduleTime(s.startsAt)}
+                  </span>
+                ) : null}
+              </Badge>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {/* A centre that has not set schedules up yet still needs the old answer, or
+          this screen silently loses a section it used to have. */}
+      {expected.length === 0 && absent.length > 0 ? (
+        <section className="space-y-2 rounded-lg border p-4">
+          <h2 className="font-semibold">Not seen today ({absent.length})</h2>
+          <p className="text-sm text-muted-foreground">
+            No schedules are set for today, so this is every active student who has not
+            been in. <Link href="/schedule" className="underline">Set up schedules</Link> to
+            narrow it to who was actually expected.
+          </p>
           <div className="flex flex-wrap gap-2">
             {absent.map((s) => (
               <Badge key={s.studentId} variant="secondary" className="px-2 py-1 text-sm">
@@ -122,21 +165,33 @@ export default async function DayPage() {
 function EstimateSection({
   title,
   blurb,
+  confirmAllLabel,
   sessions,
   timezone,
   showDate = false,
 }: {
   title: string;
   blurb: string;
+  confirmAllLabel: string;
   sessions: SessionRow[];
   timezone: string;
   showDate?: boolean;
 }) {
+  // Only rows that still carry an estimate event can be confirmed; a session with no
+  // check-out id has nothing to supersede, and its row renders without a button too.
+  const confirmable = sessions.map((s) => s.checkOutId).filter((id): id is string => Boolean(id));
+
   return (
     <section className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-4">
-      <div>
-        <h2 className="font-semibold text-amber-900">{title}</h2>
-        <p className="text-sm text-amber-900">{blurb}</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-semibold text-amber-900">{title}</h2>
+          <p className="text-sm text-amber-900">{blurb}</p>
+        </div>
+        {/* One row is already one press away — the bulk button earns its place at two. */}
+        {confirmable.length > 1 ? (
+          <ConfirmAllButton eventIds={confirmable} label={confirmAllLabel} />
+        ) : null}
       </div>
       <ul className="space-y-2">
         {sessions.map((s) => (

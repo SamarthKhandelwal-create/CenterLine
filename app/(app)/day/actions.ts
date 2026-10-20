@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { attendanceEvent } from '@/db/schema';
 import { requireSession } from '@/lib/auth/current-user';
@@ -57,4 +57,58 @@ export async function confirmInferredAction(formData: FormData) {
   revalidatePath('/history');
   revalidatePath('/compliance');
   return { ok: true };
+}
+
+const bulkSchema = z.object({ eventIds: z.array(z.string().uuid()).min(1).max(500) });
+
+/**
+ * Confirms every estimate in one section. Exactly the same attestation as pressing
+ * Confirm on each row — one superseding event per estimate, each naming the same person
+ * — so the audit log cannot tell the two apart, which is correct: it is the same claim.
+ *
+ * Takes the ids the screen was showing rather than "everything unconfirmed", so this
+ * cannot sweep up an estimate that appeared after the page was rendered, or one sitting
+ * in the other section. Each id is re-checked against the centre and its unconfirmed
+ * state inside the loop; ids that fail are skipped, so a row someone else confirmed
+ * mid-press is a no-op rather than an error for the whole batch.
+ */
+export async function confirmAllInferredAction(formData: FormData) {
+  const { user, centre } = await requireSession();
+  const parsed = bulkSchema.safeParse({ eventIds: formData.getAll('eventId').map(String) });
+  if (!parsed.success) return { error: 'Invalid selection.' };
+
+  const rows = await db
+    .select({
+      id: attendanceEvent.id,
+      studentId: attendanceEvent.studentId,
+      occurredAt: attendanceEvent.occurredAt,
+    })
+    .from(attendanceEvent)
+    .where(
+      and(
+        inArray(attendanceEvent.id, parsed.data.eventIds),
+        eq(attendanceEvent.centreId, centre.id),
+        eq(attendanceEvent.captureMethod, 'inferred'),
+        sql`NOT EXISTS (SELECT 1 FROM attendance_event s WHERE s.supersedes_id = ${attendanceEvent.id})`,
+      ),
+    );
+
+  // Sequential, not Promise.all: these are writes to the same table for the same centre,
+  // and the row count here is a day's worth of students, not a batch job.
+  let confirmed = 0;
+  for (const inferred of rows) {
+    await confirmInferredCheckOut({
+      inferredEventId: inferred.id,
+      centreId: centre.id,
+      studentId: inferred.studentId,
+      occurredAt: inferred.occurredAt,
+      confirmedBy: user.id,
+    });
+    confirmed += 1;
+  }
+
+  revalidatePath('/day');
+  revalidatePath('/history');
+  revalidatePath('/compliance');
+  return { ok: true, confirmed };
 }

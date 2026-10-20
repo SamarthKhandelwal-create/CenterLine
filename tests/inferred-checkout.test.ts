@@ -297,6 +297,73 @@ describe('automatic checkout resolution', () => {
     expect(confirmedDay[0]!.checkOutMethod).toBe('staff');
   });
 
+  it('confirming a whole section clears exactly those estimates and no others', async () => {
+    // What "Confirm all" does: the ids the screen was showing, one attestation each.
+    const centre = await makeCentre(db, { timezone: TZ, closeTime: '19:00:00' });
+    const other = await makeCentre(db, { timezone: TZ, closeTime: '19:00:00' });
+    const user = await makeUser(db, centre.id);
+    const students = await Promise.all([
+      makeStudent(db, centre.id, { firstName: 'Ana' }),
+      makeStudent(db, centre.id, { firstName: 'Ben' }),
+      makeStudent(db, centre.id, { firstName: 'Cal' }),
+    ]);
+    const outsider = await makeStudent(db, other.id, { firstName: 'Dee' });
+
+    // Today for all three, plus one from an earlier day that the other section owns.
+    for (const s of students) {
+      await addEvent(db, {
+        centreId: centre.id, studentId: s.id, type: 'check_in',
+        occurredAt: instantFromLocal(DAY, { hour: 16, minute: 0 }, TZ),
+      });
+    }
+    await addEvent(db, {
+      centreId: centre.id, studentId: students[0]!.id, type: 'check_in',
+      occurredAt: instantFromLocal('2026-05-11', { hour: 16, minute: 0 }, TZ),
+    });
+    await addEvent(db, {
+      centreId: other.id, studentId: outsider.id, type: 'check_in',
+      occurredAt: instantFromLocal(DAY, { hour: 16, minute: 0 }, TZ),
+    });
+    await resolveOpenSessions(instantFromLocal('2026-05-11', { hour: 20, minute: 30 }, TZ), asDb(db));
+    await resolveOpenSessions(instantFromLocal(DAY, { hour: 20, minute: 30 }, TZ), asDb(db));
+
+    const now = instantFromLocal(DAY, { hour: 21, minute: 0 }, TZ);
+    const pending = await unconfirmedInferredSessions(centre.id, TZ, now, asDb(db));
+    const todays = pending.filter((p) => p.sessionDate === DAY);
+    expect(todays).toHaveLength(3);
+
+    // The bulk path: every id the section rendered, confirmed in one press.
+    for (const row of todays) {
+      await confirmInferredCheckOut(
+        {
+          inferredEventId: row.checkOutId!,
+          centreId: centre.id,
+          studentId: row.studentId,
+          occurredAt: row.checkOutAt!,
+          confirmedBy: user.id,
+          at: now,
+        },
+        asDb(db),
+      );
+    }
+
+    // Today is clear; the earlier estimate — a different section — is untouched.
+    const after = await unconfirmedInferredSessions(centre.id, TZ, now, asDb(db));
+    expect(after.map((p) => p.sessionDate)).toEqual(['2026-05-11']);
+
+    // And the other centre's estimate was never in reach.
+    const otherAfter = await unconfirmedInferredSessions(other.id, TZ, now, asDb(db));
+    expect(otherAfter).toHaveLength(1);
+
+    // Each confirmation is its own superseding event naming the same person.
+    const confirmed = await sessionsInRange(centre.id, DAY, DAY, {}, asDb(db));
+    expect(confirmed).toHaveLength(3);
+    for (const s of confirmed) {
+      expect(s.isEstimated).toBe(false);
+      expect(s.checkOutMethod).toBe('staff');
+    }
+  });
+
   it('resolves each centre against its own closing time and timezone', async () => {
     const east = await makeCentre(db, { timezone: 'America/New_York', closeTime: '19:00:00' });
     const west = await makeCentre(db, { timezone: 'America/Los_Angeles', closeTime: '19:00:00' });
