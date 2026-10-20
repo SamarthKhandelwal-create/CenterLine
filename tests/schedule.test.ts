@@ -325,6 +325,98 @@ describe('the week, and the gaps in it', () => {
     expect(review[0]).toMatchObject({ firstName: 'Flex', weekday: 3, note: 'Flex/Monthly' });
   });
 
+  /**
+   * What the student page's schedule panel does on save. It sends weekday + time only,
+   * so `saveScheduleAction` re-reads the notes and carries them per day — without that,
+   * editing any day would erase the verbatim roster text on every other day.
+   *
+   * Tested at the command layer, which is where the carrying has to be correct; the
+   * action is a thin wrapper that needs a session.
+   */
+  it('keeps a day note when the week is re-saved without one', async () => {
+    const centre = await makeCentre(db, { name: 'Notes' });
+    const student = await makeStudent(db, centre.id, { firstName: 'Flex', lastInitial: 'F' });
+
+    await setStudentSchedule(
+      {
+        centreId: centre.id,
+        studentId: student.id,
+        slots: [
+          { weekday: 3, startsAt: null, note: 'Flex/Monthly' },
+          { weekday: 5, startsAt: '16:00:00' },
+        ],
+      },
+      asDb(db),
+    );
+
+    // The panel changes Friday's time and sends no notes at all. The action rebuilds
+    // them from what is already stored, keyed by day.
+    const existing = await scheduleForStudent(student.id, asDb(db));
+    const noteByDay = new Map(existing.map((e) => [e.weekday, e.note]));
+    const fromPanel = [
+      { weekday: 3, startsAt: null },
+      { weekday: 5, startsAt: '17:30:00' },
+    ];
+
+    await setStudentSchedule(
+      {
+        centreId: centre.id,
+        studentId: student.id,
+        slots: fromPanel.map((s) => ({ ...s, note: noteByDay.get(s.weekday) ?? null })),
+      },
+      asDb(db),
+    );
+
+    const after = await scheduleForStudent(student.id, asDb(db));
+    expect(after).toHaveLength(2);
+    // Wednesday keeps the only record of what that child's roster said.
+    expect(after[0]).toMatchObject({ weekday: 3, startsAt: null, note: 'Flex/Monthly' });
+    // Friday took the new time and never had a note to keep.
+    expect(after[1]).toMatchObject({ weekday: 5, startsAt: '17:30:00', note: null });
+  });
+
+  /** "Move Ava from Thursday to Monday" — the edit the panel exists for. */
+  it('moves a student from one day to another', async () => {
+    const centre = await makeCentre(db, { name: 'Move' });
+    const student = await makeStudent(db, centre.id, { firstName: 'Ava', lastInitial: 'R' });
+
+    await setStudentSchedule(
+      { centreId: centre.id, studentId: student.id, slots: [{ weekday: 4, startsAt: '17:00:00' }] },
+      asDb(db),
+    );
+    await setStudentSchedule(
+      { centreId: centre.id, studentId: student.id, slots: [{ weekday: 1, startsAt: '17:00:00' }] },
+      asDb(db),
+    );
+
+    const week = await scheduleForStudent(student.id, asDb(db));
+    expect(week).toHaveLength(1);
+    expect(week[0]).toMatchObject({ weekday: 1, startsAt: '17:00:00' });
+
+    // And they are expected on the Monday, which is the point of the move.
+    const monday = await expectedToday(centre.id, centre.timezone, MONDAY, asDb(db));
+    expect(monday.map((s) => s.studentId)).toContain(student.id);
+  });
+
+  /** Turning every day off is how a student comes off the timetable from this screen. */
+  it('clears the week from the panel and stops expecting them', async () => {
+    const centre = await makeCentre(db, { name: 'Clear' });
+    const student = await makeStudent(db, centre.id, { firstName: 'Gone', lastInitial: 'G' });
+
+    await setStudentSchedule(
+      { centreId: centre.id, studentId: student.id, slots: [{ weekday: 1, startsAt: '17:00:00' }] },
+      asDb(db),
+    );
+    await setStudentSchedule(
+      { centreId: centre.id, studentId: student.id, slots: [] },
+      asDb(db),
+    );
+
+    expect(await scheduleForStudent(student.id, asDb(db))).toHaveLength(0);
+    const monday = await expectedToday(centre.id, centre.timezone, MONDAY, asDb(db));
+    expect(monday.map((s) => s.studentId)).not.toContain(student.id);
+  });
+
   it('works out which days the centre actually teaches', async () => {
     const centre = await makeCentre(db, { name: 'Days' });
     // Three on Tuesday, one on Friday, none anywhere else.

@@ -62,6 +62,56 @@ Corrections against my earlier provisional set, now fixed:
   goes out with no delay. A second checkout within ten minutes is recorded as
   `suppressed_sibling` rather than sent — so the guardian is not messaged twice, and the
   suppression is visible in `message_log` rather than silently dropped.
+- **No kiosk re-entry once more than half the allowance is spent.** A student who has
+  already used over half of today's `expected_minutes` is refused at the tablet on their
+  next check-in. You chose both halves of this: the kiosk refuses but an instructor can
+  still check them in from /floor, and "half" counts the TOTAL of every closed session
+  today rather than the longest one — so three short visits add up and the pattern the
+  rule is aimed at cannot be walked around.
+
+  It is the third rule drawn on the same allowance and the three deliberately differ:
+  over-time only *shows* staff, early-departure blocks with no override, and this one
+  blocks with one. A child trying to leave early needs a reason to stay that the desk
+  cannot supply; a child asking to come back may have one an instructor can judge.
+
+  Only ever blocks a check-IN. A student inside the building can always leave however
+  much time they have spent — locking the door from the inside over a time budget would
+  be dangerous on a fire drill.
+
+  **Worth knowing: for a one-subject student this means one kiosk visit per day.**
+  Early-departure already refuses to check them out before 25 minutes, and 25 is past
+  half of 30 — so any normal check-out leaves them blocked from returning. That is what
+  "more than half" means for a 30-minute allowance rather than a bug, but single-subject
+  students are most of the roster, so the two rules together are stricter than either
+  looks alone. If that is too tight, the fraction is one constant
+  (`RE_ENTRY_FRACTION` in `lib/attendance/time-used.ts`).
+- **A headcount tile on /floor.** The number of children currently in the centre, sized
+  to be read across the room. It counts the same `present` array the grid renders, so the
+  two cannot disagree, and it rides the existing ten-second refresh. The heading beside it
+  now names the centre instead of repeating the count at a smaller size.
+- **Enrolling a kiosk names the account it is using, and asks.** Pressing "Open kiosk" on
+  an unenrolled device used to land on the enrol screen and bind the tablet to whatever
+  session the browser held, on one press. Cookies are shared across every tab, so on a
+  shared desktop that is the account someone signed into last — not the one in the tab
+  you pressed from, which is what made it look like clicking kiosk logged you into
+  another account. It also decides the roster the kiosk then shows.
+
+  The enrol screen now states the centre and the email it would use, links to sign in as
+  someone else, and puts the centre in the submit button. The centre it displayed is
+  echoed in a hidden field and compared on submit: if the session changed in another tab
+  in between, nothing is written and the screen says so. That field is a staleness check,
+  never an authorisation input — the token is still minted from the server's own session,
+  so posting a forged centre id gets you a re-render, not another centre's roster.
+- **Confirm all is two presses, and takes the ids on screen.** Bulk confirm appears per
+  section, only at two or more rows, and arms before it fires; the second press reads the
+  count back. Confirming an estimate is an attestation by a named person, so a single
+  mis-click doing it to a whole day is the mistake the screen must not make easy.
+
+  It takes the event ids the section rendered rather than "everything unconfirmed", so it
+  cannot sweep up an estimate that appeared after render or one belonging to the other
+  section. Each id is re-checked for centre and unconfirmed state server-side, and each
+  writes its own superseding event — the log cannot tell bulk from individual, which is
+  right, because it is the same claim.
 
 ## Decisions taken without asking
 
@@ -462,6 +512,104 @@ allowance is visible in the durations — and the compliance requirements say no
 session length, so adding a column to an audit document to restate an internal prompt
 seemed like the wrong trade.
 
+## A kiosk could show another centre's children
+
+Reported as "logins getting mixed up": sign in to Liberty, press Open kiosk, and Mason
+West's roster comes up. Reproduced exactly, and it was not about sign-in at all.
+
+The device cookie lasts 400 days and a browser shares its cookie jar across every tab.
+Middleware read that cookie first and let it through unconditionally, so on a shared
+desktop a tablet enrolled once at one centre kept winning over whoever was actually
+signed in. The enrol screen had already been taught to name the centre it was binding
+(see above), but nothing re-checked the two against each other *after* enrolment, which
+is the state a shared desktop spends all its time in.
+
+Middleware now reads both cookies and, when a staff session disagrees with the device,
+redirects to the enrol screen with both centres named. It asks rather than picks:
+neither roster is a safe default, and quietly showing a stranger's children is the
+failure being fixed. Keeping the existing kiosk is one press, because the common case
+is a staff member signing in on the door tablet to look something up — that must not
+require re-enrolling a working device, so sign-out takes a `next` and lands back on the
+kiosk rather than on a login screen nobody at the door can use.
+
+The door tablet itself is untouched: it holds a device cookie and no staff session, so
+there is nothing to disagree with. `tests/kiosk-centre-mismatch.test.ts` covers the
+mismatch, both matching pairs, the bare tablet, the API routes that write attendance,
+and the enrol screen staying reachable — without which there would be no way out of the
+redirect.
+
+## Compliance screen switched off
+
+Removed from the navigation at your request, and gated in middleware so typing the URL
+lands on /floor instead. Nothing is deleted: `/compliance`, the evidence-pack PDF,
+`lib/compliance/`, the attestation table and its recorded confirmations are all intact
+and still tested. `ENABLE_COMPLIANCE=1` brings it back.
+
+Hiding rather than deleting was deliberate — the attestations are dated confirmations
+signed by a named person, and the eight requirements this system was built against are
+documented at the top of this file. Throwing that away is not something to do on the
+way past.
+
+## Scheduling
+
+Built after the roster import went in, because the data was already in the files and
+being thrown away: these rosters carry three class days per centre (Liberty Mon/Thu/Sat,
+Mason Tue/Wed/Fri) with an arrival time against each. 494 sessions across the two
+centres were sitting in columns the importer dropped.
+
+What it changed on screen: `/day` used to list every active student who had not been
+in that day under "Expected but not seen today". On a Monday at Liberty that was 153
+students, most of whom attend on Thursday. It is now the 64 actually scheduled for a
+Monday. The heading was already right; the list was not.
+
+Decisions worth recording:
+
+- **One row per student per weekday**, not an array on `student`. "Move Ava from
+  Thursday to Monday" is the unit staff actually work in, and a unique index on
+  (student, weekday) makes a double-submit impossible to express rather than merely
+  unlikely.
+- **`starts_at` is nullable, and that is a real state.** 23 students across the two
+  rosters have a day flagged with no time against them: they come on Monday, whenever
+  they come. They are counted as expected and simply cannot be late. Inventing a time
+  to satisfy a NOT NULL would have been fabricating attendance data. `schedulesNeedingReview`
+  surfaces them, which is the "import it, flag it for review" you asked for.
+- **"Flex/Monthly" is kept verbatim** in `note`. It appears in the time column of the
+  Mason roster with no day flag beside it; it is not a clock time, so it is not parsed
+  as one, but discarding it would lose the only thing the file said about that child's week.
+- **A file with no day columns does not clear a schedule.** Saying nothing about the
+  week and saying the week is empty are different, and conflating them would let a
+  partial export wipe a timetable staff had set by hand. A file that *has* day columns
+  and ticks none does clear it — that student has come off the timetable.
+- **The weekday is read in the centre's timezone.** `at.getDay()` on Vercel is UTC, so
+  a Saturday 8pm session in New York reports Sunday and the Saturday roster comes back
+  empty. Tested at both DST transitions.
+- **The planner proposes, it does not write.** Generating a timetable decides where real
+  children are expected to be, so it previews and the instructor applies. Applying is two
+  presses, the same reasoning as Confirm all. It fills the emptiest slot first so the
+  room stays even, and it is deterministic — the same roster gives the same plan, which
+  is what makes it reviewable.
+- **One student's week is editable on their own page.** The schedule screen shows the
+  whole centre and plans timetables in bulk; the other unit staff work in is "move Ava
+  from Thursday to Monday", and that had no screen — `saveScheduleAction` existed, was
+  tested, and already revalidated `/students/<id>`, but that page rendered no schedule.
+  The panel saves through the same action, so the centre check and the one-entry-per-day
+  rule apply identically to a hand edit and a generated plan.
+
+  A day is off, on with a time, or on with no fixed time. That third state is a real one
+  — 23 students across these rosters have it — so "Any time" is an option in the list
+  rather than an absence, and the Save button stays disabled until something actually
+  changes.
+- **Saving a week used to erase the day notes, and now does not.** `setStudentSchedule`
+  replaces the whole week and takes `note`, but `saveScheduleAction`'s schema accepted
+  only weekday and time — so any save through it dropped the verbatim roster text
+  ("Flex/Monthly") on every day, which is the only record of what that child's roster
+  said. The action now re-reads the stored notes and carries them per day. Found while
+  building the panel, by reading what the action discards rather than from a failing
+  test; the existing schedule screen had the same bug.
+- **`nothingToDo` on /day now accounts for unaccounted-for students.** It did not before,
+  so the "Everything is closed out" banner could sit directly above a list of children
+  nobody had seen. Found by loading the page, not by a test.
+
 ## Known limits
 
 - **Cron is daily, and one daily trigger cannot serve every timezone.** Hobby rejects any
@@ -485,11 +633,21 @@ seemed like the wrong trade.
   character, that would be deterministic. Needs testing with the actual hardware.
 - **No confirmation before issuing new QR cards for the whole centre** beyond a browser
   `confirm()`. Worth a stronger flow if a centre has many tablets and staff.
+- **A schedule is a weekly repeat with no exceptions.** There is no holiday calendar, no
+  one-off "away next Thursday", and no term dates. A closed centre still shows its roster
+  as expected. Exceptions need a second table of dated overrides.
+- **Nothing acts on a late arrival yet.** `starts_at` is stored and displayed, and
+  `expectedToday` reports who has not come, but no alert or message fires from it — the
+  not-arrived cron still works off its own fixed hour rather than each student's
+  scheduled time.
+- **The planner does not know about siblings.** Two children at one address get placed
+  independently and can land on different days, which is the one thing a parent will
+  notice first. Grouping by guardian is the obvious next step.
 
 ## Deliberately not built
 
 Everything on the exclusion list was left out: no offline support or service workers, no
-student workflow states beyond present/absent, no wall display, no scheduling, no tuition
+student workflow states beyond present/absent, no wall display, no tuition
 or invoicing, no CRM, no worksheet inventory, no academic progress tracking, no conference
 scheduling, no multi-centre management, no design token pipeline, no native apps.
 

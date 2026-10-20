@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { db } from '@/db';
 import { requireInstructor } from '@/lib/auth/current-user';
 import { centreClassDays, dayLoad, setStudentSchedule } from '@/lib/schedule/commands';
-import { weekSchedule } from '@/lib/schedule/queries';
+import { scheduleForStudent, weekSchedule } from '@/lib/schedule/queries';
 import { planSchedule } from '@/lib/schedule/plan';
 
 const timeLiteral = z
@@ -28,9 +28,23 @@ export async function saveScheduleAction(input: unknown) {
   const parsed = saveSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? 'Invalid schedule.' };
 
+  // `setStudentSchedule` replaces the week, and the client does not send `note` — so
+  // without this, saving any day would erase the text the import kept verbatim for days
+  // it could not read as a time ("Flex/Monthly"), which is the only record of what that
+  // child's roster actually said. Re-read it here and carry it per day.
+  const existing = await scheduleForStudent(parsed.data.studentId, db);
+  const noteByDay = new Map(existing.map((e) => [e.weekday, e.note]));
+
   try {
     await setStudentSchedule(
-      { centreId: centre.id, studentId: parsed.data.studentId, slots: parsed.data.slots },
+      {
+        centreId: centre.id,
+        studentId: parsed.data.studentId,
+        slots: parsed.data.slots.map((slot) => ({
+          ...slot,
+          note: noteByDay.get(slot.weekday) ?? null,
+        })),
+      },
       db,
     );
   } catch (err) {
