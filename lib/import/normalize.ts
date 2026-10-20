@@ -75,6 +75,27 @@ export function canonicalSubject(raw: string): string {
   return SUBJECT_CANON[key] ?? titleCase(raw.trim());
 }
 
+/** Single-letter codes, read only inside a combined cell — a lone "M" elsewhere is not Math. */
+const SUBJECT_CODES: Record<string, string> = { m: 'Math', r: 'Reading' };
+
+/**
+ * One subject cell into its subjects. A tall file holds one per cell, but some centres
+ * write both in one column: "M/R", "Math & Reading". Split on the separators, and read
+ * the M/R codes those files use.
+ */
+export function canonicalSubjects(raw: string): string[] {
+  const parts = raw
+    .split(/\s*(?:\/|,|&|\+|\band\b)\s*/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  for (const part of parts) {
+    const subject = SUBJECT_CODES[part.toLowerCase()] ?? canonicalSubject(part);
+    if (subject && !out.includes(subject)) out.push(subject);
+  }
+  return out;
+}
+
 /**
  * To E.164 where possible. A 10-digit number is assumed to be the centre's country
  * (North America in practice); anything already in international form is preserved.

@@ -75,6 +75,16 @@ describe('weekday helpers', () => {
     expect(parseScheduleTime('17:30')).toBe('17:30:00'); // 24-hour
   });
 
+  it('reads a time with no meridiem the way a handwritten roster means it', () => {
+    // The Anderson roster writes "4:00", "3:30" and "4PM" straight into the day column.
+    expect(parseScheduleTime('4:00')).toBe('16:00:00');
+    expect(parseScheduleTime('6:30')).toBe('18:30:00');
+    expect(parseScheduleTime('4PM')).toBe('16:00:00');
+    expect(parseScheduleTime('10 am')).toBe('10:00:00');
+    expect(parseScheduleTime('11:00')).toBe('11:00:00'); // Saturday morning stays morning
+    expect(parseScheduleTime('07:30')).toBe('07:30:00'); // a leading zero is 24-hour
+  });
+
   it('treats text that is not a time as not a time', () => {
     // "Flex/Monthly" appears in the time column of the real Mason roster.
     expect(parseScheduleTime('Flex/Monthly')).toBeNull();

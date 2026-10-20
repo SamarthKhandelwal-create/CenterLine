@@ -427,6 +427,67 @@ describe('roster import', () => {
     expect(await rosterFingerprint(db, centre.id)).toEqual(before);
   });
 
+  /**
+   * The Anderson roster: the time is written straight into each day's column, both
+   * subjects share one "M/R" cell, and the parent blocks are "Mother First Name /
+   * Mother Cell Phone" then the father's. Headers verbatim from that file.
+   */
+  const ANDERSON = csv([
+    ['First Name', 'Monday', 'Tuesday', 'Thursday', 'Time', 'M/R', 'Class', 'Last Name',
+      'Mother First Name', 'Mother Cell Phone', 'Father First Name', 'Father Cell Phone'],
+    ['AAHNA', '4:00', '', '4PM', '', 'M/R', 'M', 'PATEL', 'Bhumika', '513-555-0301', 'Varun', '513-555-0302'],
+    ['Abbas', '', '', '3:30', '', 'R', 'M', 'Abdullah', 'India', '513-555-0303', '', ''],
+    // Mother's phone blank: the father is the one who can be reached.
+    ['Ameya', 'digital', '5:30', '6:30 Zoom', '', 'M', 'EL', 'Poulose', 'Anu', '', 'Jaise', '513-555-0304'],
+  ]);
+
+  it('reads the Anderson roster: parent-prefixed headers are not the student', async () => {
+    const centre = await makeCentre(db);
+    const plan = await analyzeImport(centre.id, ANDERSON, asDb(db));
+
+    expect(plan.mapping.firstName).toBe(0);
+    expect(plan.mapping.lastName).toBe(7);
+    expect(plan.mapping.guardianName).toBe(8);
+    expect(plan.mapping.guardianPhone).toBe(9);
+    expect(plan.mapping.extraGuardians).toEqual([{ name: 10, phone: 11 }]);
+
+    const [aahna, abbas, ameya] = plan.items.map((i) => i.candidate);
+    expect(aahna!.firstName).toBe('Aahna');
+    expect(aahna!.guardianName).toBe('Bhumika');
+    expect(aahna!.guardianPhone).toBe('+15135550301');
+    expect(abbas!.guardianName).toBe('India');
+    expect(ameya!.guardianName).toBe('Jaise');
+    expect(ameya!.guardianPhone).toBe('+15135550304');
+  });
+
+  it('reads an "M/R" cell as both subjects', async () => {
+    const centre = await makeCentre(db);
+    const plan = await analyzeImport(centre.id, ANDERSON, asDb(db));
+    expect(plan.items.map((i) => i.candidate.subjects)).toEqual([
+      ['Math', 'Reading'],
+      ['Reading'],
+      ['Math'],
+    ]);
+  });
+
+  it('reads a time written into the day column as that day', async () => {
+    const centre = await makeCentre(db);
+    const plan = await analyzeImport(centre.id, ANDERSON, asDb(db));
+    const [aahna, abbas, ameya] = plan.items.map((i) => i.candidate);
+
+    expect(aahna!.schedule).toEqual([
+      { weekday: 1, startsAt: '16:00:00', note: null },
+      { weekday: 4, startsAt: '16:00:00', note: null },
+    ]);
+    expect(abbas!.schedule).toEqual([{ weekday: 4, startsAt: '15:30:00', note: null }]);
+    // A remark keeps its text; a time in front of it is still read.
+    expect(ameya!.schedule).toEqual([
+      { weekday: 1, startsAt: null, note: 'digital' },
+      { weekday: 2, startsAt: '17:30:00', note: null },
+      { weekday: 4, startsAt: '18:30:00', note: '6:30 Zoom' },
+    ]);
+  });
+
   it('never writes attendance events during an import', async () => {
     const centre = await makeCentre(db);
     await commitImport(

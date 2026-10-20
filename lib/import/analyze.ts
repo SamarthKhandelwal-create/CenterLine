@@ -13,7 +13,7 @@ import { formatScheduleTime, parseScheduleTime, weekdayShortName } from '@/lib/s
 import { detectHeaderRow, parseSpreadsheet } from './parse';
 import { matchColumns, type ColumnMapping } from './match-columns';
 import {
-  canonicalSubject,
+  canonicalSubjects,
   fullNameKey,
   lastInitialOf,
   normalizePhone,
@@ -127,8 +127,9 @@ export function groupRows(rows: string[][], mapping: ColumnMapping, headerRowInd
     const sourceId = cell(row, mapping.sourceId).trim() || null;
     const key = sourceId ? `id:${sourceId}` : `name:${fullNameKey(firstName, lastName)}`;
 
-    // Tall shape: one subject per row. Wide shape: a flag under each subject column.
-    const subject = canonicalSubject(cell(row, mapping.subject));
+    // Tall shape: one subject per row, or both in one cell ("M/R"). Wide shape: a flag
+    // under each subject column.
+    const cellSubjects = canonicalSubjects(cell(row, mapping.subject));
     const wideSubjects = (mapping.subjectColumns ?? [])
       .filter((s) => isAffirmative(cell(row, s.column)))
       .map((s) => s.subject);
@@ -159,23 +160,33 @@ export function groupRows(rows: string[][], mapping: ColumnMapping, headerRowInd
     const statusCell = cell(row, mapping.status);
     const releaseCell = cell(row, mapping.releaseMode);
 
-    const rowSubjects = subject ? [subject, ...wideSubjects] : wideSubjects;
+    const rowSubjects = [...cellSubjects, ...wideSubjects.filter((s) => !cellSubjects.includes(s))];
 
     // Class days. A day counts when its flag is ticked, and also when it carries an
     // arrival time but no flag — "Flex/Monthly" sits in the time column with nothing
     // beside it, and dropping it would lose the only thing the file said about that
     // child's week.
+    //
+    // Some files have one column per day and write the time straight into it ("4:00",
+    // "4PM", "6:30 Zoom"). With no separate time column, a flag cell that is not a tick
+    // is that day's time.
     const rowSchedule = mapping.dayColumns
       ? mapping.dayColumns.flatMap((day) => {
           const flag = cell(row, day.flagColumn).trim();
-          const timeText = cell(row, day.timeColumn).trim();
+          const timeText =
+            day.timeColumn === undefined && !isAffirmative(flag)
+              ? flag
+              : cell(row, day.timeColumn).trim();
           if (!isAffirmative(flag) && !timeText) return [];
-          const startsAt = timeText ? parseScheduleTime(timeText) : null;
+          // "4:00 digital" is a time with a remark: the time is read from the front, and
+          // the whole text kept as the note below.
+          const exact = timeText ? parseScheduleTime(timeText) : null;
+          const startsAt = exact ?? (timeText ? parseScheduleTime(timeText.split(/\s+/)[0] ?? '') : null);
           return [{
             weekday: day.weekday,
             startsAt,
-            // Text that is not a clock time is kept verbatim for the review screen.
-            note: timeText && startsAt === null ? timeText : null,
+            // Text that is not purely a clock time is kept verbatim for the review screen.
+            note: timeText && exact === null ? timeText : null,
           }];
         })
       : null;

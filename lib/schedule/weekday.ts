@@ -85,11 +85,14 @@ export function parseScheduleTime(raw: string): string | null {
   const value = raw.trim();
   if (!value) return null;
 
-  const match = /^(\d{1,2})\s*:\s*(\d{2})\s*(am|pm)?$/i.exec(value);
+  // Minutes are optional only with a meridiem: "4PM" is a time, a bare "4" is not.
+  const match =
+    /^(\d{1,2})\s*:\s*(\d{2})\s*(am|pm)?$/i.exec(value) ??
+    /^(\d{1,2})()\s*(am|pm)$/i.exec(value);
   if (!match) return null;
 
   let hour = Number(match[1]);
-  const minute = Number(match[2]);
+  const minute = Number(match[2] || 0);
   const meridiem = match[3]?.toLowerCase();
 
   if (minute > 59) return null;
@@ -99,6 +102,11 @@ export function parseScheduleTime(raw: string): string | null {
     if (meridiem === 'am' && hour === 12) hour = 0;
   } else if (hour > 23) {
     return null;
+  } else if (hour >= 1 && hour <= 7 && !match[1]!.startsWith('0')) {
+    // Rosters written by hand drop the meridiem: "4:00" on a class day is four in the
+    // afternoon. No centre opens between 1 and 7 in the morning, so read those as PM.
+    // A leading zero ("07:30") is deliberate 24-hour time and stays as written.
+    hour += 12;
   }
 
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;

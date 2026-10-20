@@ -20,6 +20,8 @@ import type { Db } from './client';
  *   LIBERTY_STAFF_PASSWORD=...
  *   MASON_INSTRUCTOR_PASSWORD=...
  *   MASON_STAFF_PASSWORD=...
+ *   ANDERSON_INSTRUCTOR_PASSWORD=...
+ *   ANDERSON_STAFF_PASSWORD=...
  *
  * `requirePassword` throws rather than defaulting, so a missing variable fails loudly
  * at the point of use instead of quietly setting an account to a guessable password.
@@ -69,6 +71,21 @@ export const SHARED_STAFF = [
     passwordEnvVar: 'MASON_STAFF_PASSWORD',
     role: 'assistant' as const,
   },
+  {
+    // The centre's own address, so a password reset reaches whoever reads that inbox.
+    centreName: 'Kumon of Anderson',
+    email: 'anderson_oh@ikumon.com',
+    name: 'Anderson Instructor',
+    passwordEnvVar: 'ANDERSON_INSTRUCTOR_PASSWORD',
+    role: 'instructor' as const,
+  },
+  {
+    centreName: 'Kumon of Anderson',
+    email: 'staff@kumonofanderson',
+    name: 'Anderson Staff',
+    passwordEnvVar: 'ANDERSON_STAFF_PASSWORD',
+    role: 'assistant' as const,
+  },
 ];
 
 /**
@@ -81,10 +98,12 @@ export const SHARED_STAFF = [
  * two centres, and matching on email would move their existing account to whichever
  * centre this list happens to name rather than creating the second one.
  */
-export async function createSharedStaff(db: Db): Promise<string[]> {
+export async function createSharedStaff(db: Db, onlyCentre?: string): Promise<string[]> {
   const results: string[] = [];
 
-  for (const person of SHARED_STAFF) {
+  // Opening one centre must not re-point every other centre's passwords: someone who
+  // has since reset theirs would be locked out by a script they never ran.
+  for (const person of SHARED_STAFF.filter((p) => !onlyCentre || p.centreName === onlyCentre)) {
     const centres = await db
       .select({ id: centreT.id })
       .from(centreT)

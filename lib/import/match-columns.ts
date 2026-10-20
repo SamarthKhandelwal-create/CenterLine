@@ -28,7 +28,8 @@ const SYNONYMS: Record<ImportField, string[]> = {
   firstName: ['first name', 'first', 'given name', 'forename', 'fname', 'student first name', 'student first'],
   lastName: ['last name', 'last', 'surname', 'family name', 'lname', 'student last name', 'student last'],
   fullName: ['name', 'student name', 'student', 'full name', 'student full name', 'child name'],
-  subject: ['subject', 'program', 'course', 'curriculum', 'subject enrolled', 'programme'],
+  // 'm r' is the "M/R" header some centres use, holding "M/R", "M" or "R" per row.
+  subject: ['subject', 'subjects', 'program', 'course', 'curriculum', 'subject enrolled', 'programme', 'm r'],
   status: ['status', 'active', 'enrollment status', 'enrolled', 'state'],
   expectedMinutes: ['expected minutes', 'duration', 'session length', 'minutes', 'expected time'],
   guardianName: ['parent', 'guardian', 'parent name', 'guardian name', 'contact', 'contact name', 'mother', 'father', 'primary contact'],
@@ -63,9 +64,26 @@ export function similarity(a: string, b: string): number {
   return total === 0 ? 0 : (2 * hits) / total;
 }
 
+/**
+ * Words that put a header in a parent's column set. "Mother First Name" contains
+ * "first name", and without this it scored 0.85 as the student's given name — it then
+ * claimed fullName, the mother's name was never read, and her phone column fell to
+ * guardianName, so a phone number was stored as the guardian's name.
+ */
+const GUARDIAN_WORDS = ['mother', 'father', 'mom', 'dad', 'parent', 'guardian'];
+const PHONE_WORDS = ['phone', 'cell', 'mobile', 'telephone', 'sms'];
+const STUDENT_NAME_FIELDS: ImportField[] = ['firstName', 'lastName', 'fullName'];
+
+function hasAnyWord(h: string, words: string[]): boolean {
+  return words.some((w) => containsWords(h, w));
+}
+
 function scoreHeader(header: string, field: ImportField): number {
   const h = normalizeHeader(header);
   if (!h) return 0;
+  if (STUDENT_NAME_FIELDS.includes(field) && hasAnyWord(h, GUARDIAN_WORDS)) return 0;
+  // "Father Cell Phone" names a parent, but it holds a number, not a name.
+  if (field === 'guardianName' && hasAnyWord(h, PHONE_WORDS)) return 0;
   let best = 0;
   for (const synonym of SYNONYMS[field]) {
     if (h === synonym) return 1;
